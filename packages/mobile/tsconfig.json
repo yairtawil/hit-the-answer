@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@hit-the-answer/common": ["../common/src/index.ts"]
+    }
+  },
+  "include": ["src", "index.js"]
+}

@@ -5,34 +5,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm start          # Start Expo dev server (opens QR code for Expo Go)
-npm run ios        # Start with iOS simulator
-npm run android    # Start with Android emulator
-npm run web        # Start with web browser
-```
+# From repo root:
+npm run mobile     # Start Expo dev server (mobile)
+npm run web        # Start Vite dev server (web, http://localhost:5173)
 
-No test runner is configured.
+# From packages/mobile:
+npx expo start --ios
+npx expo start --android
+
+# From packages/web:
+npm run build      # Type-check + production build
+```
 
 ## Architecture
 
-This is a single-file React Native game built with Expo (`App.tsx`). The entire game — state, game loop, rendering — lives in one component.
+Monorepo with npm workspaces. Three packages:
 
-**Game loop**: A `requestAnimationFrame` loop inside `useEffect` (keyed to `gameKey`) mutates a `useRef<GameState>` directly each frame, then calls `rerender(c => c+1)` to trigger a React re-render. This bypasses React's immutable state model intentionally for performance.
+- **`packages/common`** — pure TypeScript, zero dependencies. Exports all game types, constants, helper functions (`createQuestion`, `createNumbers`, `spawnExplosion`, `overlaps`, `makeState`), and the frame-advancing `tickGame(state, sw, sh)` function. No React imports.
 
-**State management**: `g.current` (a `useRef`) holds all mutable game state. The ref is reset to a fresh `makeState()` when `gameKey` changes (restart). The `[, rerender]` state is only used to drive re-renders; the actual data lives in the ref.
+- **`packages/mobile`** — Expo/React Native app. `src/App.tsx` handles RN rendering (absolute-positioned `<View>` elements) and touch input via `PanResponder` (drag = move ship, tap = shoot). Imports all game logic from `@hit-the-answer/common`. Metro config at `metro.config.js` sets up monorepo watch folders.
 
-**Touch input**: `PanResponder` distinguishes between drags (move ship) and taps (fire bullet) using `DRAG_THRESHOLD` and `TAP_MAX_DURATION` constants.
+- **`packages/web`** — Vite + React web app. `src/App.tsx` renders to a full-screen `<canvas>`. Input: mousemove = move ship, click or Space = shoot, ArrowLeft/ArrowRight = keyboard steering. Game-over state shows a DOM overlay. Imports game logic from `@hit-the-answer/common`.
 
-**Game mechanics**:
-- A math question (`+`, `−`, `×`) is shown in the HUD
-- `ANSWER_COUNT` (5) numbered bubbles fall from the top; one is the correct answer
-- Shooting the correct answer scores a point and spawns a new round; shooting wrong costs a life
-- Letting any number fall off screen costs a life; letting the correct answer fall also starts a new round
-- Fall speed increases with score (`BASE_FALL_SPEED + score * 0.08`)
-- Particle explosion effects use a simple physics simulation (gravity + drag)
+### Game loop pattern (both platforms)
 
-**Rendering**: All game objects (stars, numbers, bullets, particles, ship) are absolutely positioned `<View>` elements. The ship is composed of pure CSS shapes (no images).
+Both platforms use a `useRef<GameState>` to hold mutable state and a `requestAnimationFrame` loop inside `useEffect`. Each frame calls `tickGame(s, sw, sh)` (which mutates `s` in place), then triggers a React re-render (mobile) or a canvas redraw (web). Restarting increments `gameKey`, which causes `makeState()` to be called and the `useEffect` to re-run.
 
-## TypeScript
+### Screen dimensions
 
-`strict: true` is enabled. The `App.js` file in git is deleted and replaced by `App.tsx`.
+`makeState(key, sw)` and `tickGame(s, sw, sh)` receive screen dimensions as parameters. Mobile reads them from `Dimensions.get('window')`. Web reads `canvas.width/canvas.height` each frame (supports window resize).
