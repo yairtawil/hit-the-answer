@@ -5,6 +5,7 @@ export const BULLET_W = 6;
 export const BULLET_H = 18;
 export const BULLET_SPEED = 12;
 export const NUM_SIZE = 48;
+export const ROCK_MAX_HP = 3;
 export const BASE_FALL_SPEED = 1.5;
 export const ANSWER_COUNT = 5;
 export const MAX_LIVES = 3;
@@ -19,7 +20,9 @@ export const PARTICLE_LIFETIME = 28;
 export const POWERUP_SIZE = 32;
 export const POWERUP_FALL_SPEED = 1.5;
 export const POWERUP_DROP_CHANCE = 0.25;
+export const BAD_DROP_CHANCE = 0.2;
 export const POWERUP_DURATION = 600; // ~10 seconds at 60fps
+export const BAD_EFFECT_DURATION = 300; // ~5 seconds at 60fps
 
 // Streak / ship-level constants
 export const STREAK_THRESHOLDS = [0, 5, 10, 15, 20];
@@ -41,16 +44,89 @@ export function shipScale(level: number): number {
   return 1 + level * 0.1;
 }
 
+/** Visual scale factor for a rock based on its current hp. hp=3 → 1.3x, hp=2 → 1.0x, hp=1 → 0.75x */
+export function rockScale(hp: number): number {
+  if (hp >= 3) return 1.3;
+  if (hp === 2) return 1.0;
+  return 0.75;
+}
+
+// ─── Themes ──────────────────────────────────────────────────────────────────
+
+export type BgTheme = {
+  id: string;
+  name: string;
+  bg: string;
+  star: string;
+  light: boolean;
+};
+
+export type ShipTheme = {
+  id: string;
+  name: string;
+  nose: string;
+  noseLight: string;
+  body: string;
+  wing: string;
+  wingMid: string;
+  wingLight: string;
+  flame: string;
+};
+
+export const BG_THEMES: BgTheme[] = [
+  { id: 'space',    name: 'Deep Space', bg: '#06080F', star: '#ffffff', light: false },
+  { id: 'nebula',   name: 'Nebula',    bg: '#0F0525', star: '#D8B4FE', light: false },
+  { id: 'ocean',    name: 'Ocean',     bg: '#021B2E', star: '#7DD3FC', light: false },
+  { id: 'crimson',  name: 'Crimson',   bg: '#150808', star: '#FCA5A5', light: false },
+  { id: 'daylight', name: 'Daylight',  bg: '#E8F0FE', star: '#93C5FD', light: true },
+  { id: 'meadow',   name: 'Meadow',   bg: '#ECFDF5', star: '#6EE7B7', light: true },
+];
+
+export const SHIP_THEMES: ShipTheme[] = [
+  { id: 'classic', name: 'Classic', nose: '#7C9DFF', noseLight: '#A3BFFF', body: '#4A6CF7', wing: '#3A5BD7', wingMid: '#5577EE', wingLight: '#6B8CFF', flame: '#FF9F43' },
+  { id: 'inferno', name: 'Inferno', nose: '#FF8A65', noseLight: '#FFAB91', body: '#E63946', wing: '#C1121F', wingMid: '#E63946', wingLight: '#FF6B6B', flame: '#FFD60A' },
+  { id: 'emerald', name: 'Emerald', nose: '#6EE7B7', noseLight: '#A7F3D0', body: '#10B981', wing: '#059669', wingMid: '#34D399', wingLight: '#6EE7B7', flame: '#FCD34D' },
+  { id: 'royal',   name: 'Royal',   nose: '#C4B5FD', noseLight: '#DDD6FE', body: '#8B5CF6', wing: '#6D28D9', wingMid: '#8B5CF6', wingLight: '#A78BFA', flame: '#F472B6' },
+  { id: 'pink',    name: 'Pink',    nose: '#F9A8D4', noseLight: '#FBCFE8', body: '#EC4899', wing: '#BE185D', wingMid: '#EC4899', wingLight: '#F472B6', flame: '#FDE68A' },
+];
+
+export type NumShape = {
+  id: string;
+  name: string;
+};
+
+export const NUM_SHAPES: NumShape[] = [
+  { id: 'circle',  name: 'Circle' },
+  { id: 'stone',   name: 'Stone' },
+  { id: 'hex',     name: 'Hexagon' },
+  { id: 'diamond', name: 'Diamond' },
+];
+
+export function getBgTheme(id: string): BgTheme {
+  return BG_THEMES.find(t => t.id === id) ?? BG_THEMES[0];
+}
+
+export function getShipTheme(id: string): ShipTheme {
+  return SHIP_THEMES.find(t => t.id === id) ?? SHIP_THEMES[0];
+}
+
+export function getNumShape(id: string): NumShape {
+  return NUM_SHAPES.find(s => s.id === id) ?? NUM_SHAPES[0];
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type Question = { text: string; answer: number };
 export type Bullet = { id: string; x: number; y: number };
-export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean };
+export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number };
 export type Particle = { id: string; x: number; y: number; vx: number; vy: number; color: string; life: number; maxLife: number; size: number };
 export type Star = { x: number; y: number; r: number; o: number };
 
-export type PowerUpKind = 'life' | 'slow' | 'shield';
-export type PowerUp = { id: string; kind: PowerUpKind; x: number; y: number };
+export type PowerUpKind = 'life' | 'slow' | 'shield' | 'fast' | 'lose_life';
+export type PowerUp = { id: string; kind: PowerUpKind; x: number; y: number; bad: boolean };
+
+export const NOTIF_LIFETIME = 90; // ~1.5 seconds at 60fps
+export type Notif = { id: string; text: string; color: string; x: number; y: number; life: number; size: number };
 
 export type GameState = {
   _key: number;
@@ -65,13 +141,17 @@ export type GameState = {
   score: number;
   lives: number;
   over: boolean;
+  paused: boolean;
   // Power-ups
   powerups: PowerUp[];
   slowTimer: number;
   shieldTimer: number;
+  fastTimer: number;
   // Streak
   streak: number;
   shipLevel: number;
+  // Notifications
+  notifs: Notif[];
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -99,13 +179,19 @@ export function createNumbers(answer: number, sw: number): FallingNum[] {
   }
   const arr = Array.from(vals).sort(() => Math.random() - 0.5);
   const gap = sw / (arr.length + 1);
-  return arr.map((value, i) => ({
-    id: `n${Date.now()}-${i}`,
-    value,
-    x: gap * (i + 1) - NUM_SIZE / 2,
-    y: -(NUM_SIZE + Math.random() * 200),
-    correct: value === answer,
-  }));
+  return arr.map((value, i) => {
+    const isCorrect = value === answer;
+    const hp = 1 + Math.floor(Math.random() * ROCK_MAX_HP);
+    return {
+      id: `n${Date.now()}-${i}`,
+      value,
+      x: gap * (i + 1) - NUM_SIZE / 2,
+      y: -(NUM_SIZE + Math.random() * 200),
+      correct: isCorrect,
+      hp,
+      maxHp: hp,
+    };
+  });
 }
 
 export function spawnExplosion(cx: number, cy: number, correct: boolean): Particle[] {
@@ -149,11 +235,14 @@ export function makeState(key: number, sw: number): GameState {
     score: 0,
     lives: MAX_LIVES,
     over: false,
+    paused: false,
     powerups: [],
     slowTimer: 0,
     shieldTimer: 0,
+    fastTimer: 0,
     streak: 0,
     shipLevel: 0,
+    notifs: [],
   };
 }
 
@@ -167,20 +256,26 @@ function dropOneLevel(s: GameState): void {
   s.shipLevel = shipLevelFromStreak(s.streak);
 }
 
-function maybeSpawnPowerUp(s: GameState, nx: number, ny: number): void {
-  if (Math.random() < POWERUP_DROP_CHANCE) {
-    const kinds: PowerUpKind[] = ['life', 'slow', 'shield'];
-    s.powerups.push({
-      id: `pu${Date.now()}-${Math.random()}`,
-      kind: kinds[Math.floor(Math.random() * kinds.length)],
-      x: nx + NUM_SIZE / 2 - POWERUP_SIZE / 2,
-      y: ny + NUM_SIZE / 2 - POWERUP_SIZE / 2,
-    });
-  }
+function addNotif(s: GameState, text: string, color: string, x: number, y: number, size = 22): void {
+  s.notifs.push({ id: `nf${Date.now()}-${Math.random()}`, text, color, x, y, life: NOTIF_LIFETIME, size });
+}
+
+function maybeSpawnPowerUp(s: GameState, nx: number, ny: number, good: boolean): void {
+  const chance = good ? POWERUP_DROP_CHANCE : BAD_DROP_CHANCE;
+  if (Math.random() >= chance) return;
+  const kinds: PowerUpKind[] = good ? ['life', 'slow', 'shield'] : ['fast', 'lose_life'];
+  s.powerups.push({
+    id: `pu${Date.now()}-${Math.random()}`,
+    kind: kinds[Math.floor(Math.random() * kinds.length)],
+    x: nx + NUM_SIZE / 2 - POWERUP_SIZE / 2,
+    y: ny + NUM_SIZE / 2 - POWERUP_SIZE / 2,
+    bad: !good,
+  });
 }
 
 export function tickGame(s: GameState, sw: number, sh: number): void {
-  const fallSpeed = (BASE_FALL_SPEED + s.score * 0.08) * (s.slowTimer > 0 ? 0.4 : 1);
+  const speedMul = s.slowTimer > 0 ? 0.4 : s.fastTimer > 0 ? 1.8 : 1;
+  const fallSpeed = (BASE_FALL_SPEED + s.score * 0.08) * speedMul;
   const bulletSpeed = BULLET_SPEED + BULLET_SPEED_BONUS[s.shipLevel];
 
   // Move bullets
@@ -203,27 +298,51 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     dropOneLevel(s);
   }
 
-  // Bullet–number collisions
+  // Bullet–rock collisions
   let newRound = correctFell;
   const keptBullets: Bullet[] = [];
   for (const b of s.bullets) {
+    if (newRound) break; // stop processing bullets once a new round triggers
     let hit = false;
     for (let i = s.numbers.length - 1; i >= 0; i--) {
       const n = s.numbers[i];
-      if (overlaps(b.x, b.y, BULLET_W, BULLET_H, n.x, n.y, NUM_SIZE, NUM_SIZE)) {
+      const rs = rockScale(n.hp);
+      const rSize = NUM_SIZE * rs;
+      const rx = n.x + NUM_SIZE / 2 - rSize / 2;
+      const ry = n.y + NUM_SIZE / 2 - rSize / 2;
+      if (overlaps(b.x, b.y, BULLET_W, BULLET_H, rx, ry, rSize, rSize)) {
         hit = true;
-        const nx = n.x, ny = n.y;
-        s.particles.push(...spawnExplosion(nx + NUM_SIZE / 2, ny + NUM_SIZE / 2, n.correct));
-        s.numbers.splice(i, 1);
+        const cx = n.x + NUM_SIZE / 2, cy = n.y + NUM_SIZE / 2;
         if (n.correct) {
-          s.score++;
-          s.streak++;
-          s.shipLevel = shipLevelFromStreak(s.streak);
-          newRound = true;
-          maybeSpawnPowerUp(s, nx, ny);
+          n.hp--;
+          // Chip particles on each hit
+          s.particles.push(...spawnExplosion(cx, cy, true).map(p => ({ ...p, size: p.size * 0.7 })));
+          if (n.hp <= 0) {
+            // Rock destroyed — score + new round
+            s.numbers.splice(i, 1);
+            s.particles.push(...spawnExplosion(cx, cy, true));
+            s.score++;
+            s.streak++;
+            const prevLevel = s.shipLevel;
+            s.shipLevel = shipLevelFromStreak(s.streak);
+            newRound = true;
+            maybeSpawnPowerUp(s, n.x, n.y, true);
+            if (s.shipLevel > prevLevel) {
+              const msgs = ['', 'LEVEL UP! 🚀', 'DOUBLE FLAME! 🔥🔥', 'TRIPLE FLAME! 🔥🔥🔥', 'MAX POWER! ⚡'];
+              addNotif(s, msgs[s.shipLevel], '#FFD866', sw / 2, sh * 0.35, 28);
+            } else if (s.streak > 0 && s.streak % 10 === 0) {
+              addNotif(s, `${s.streak}x STREAK! 🎯`, '#4ADE80', sw / 2, sh * 0.35, 26);
+            }
+            if (n.maxHp >= 3) addNotif(s, 'ROCK SMASHED! 💥', '#FF9F43', cx, cy - 30);
+          }
         } else {
+          // Wrong rock — instant destroy + new question
+          s.particles.push(...spawnExplosion(cx, cy, false));
+          s.numbers.splice(i, 1);
           if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
           dropOneLevel(s);
+          newRound = true;
+          maybeSpawnPowerUp(s, n.x, n.y, false);
         }
         break;
       }
@@ -261,18 +380,29 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     pu.y += POWERUP_FALL_SPEED;
     if (pu.y > sh) return false;
     if (overlaps(pu.x, pu.y, POWERUP_SIZE, POWERUP_SIZE, collX, sy, collW, SHIP_W)) {
-      if (pu.kind === 'life') s.lives = Math.min(MAX_LIVES_CAP, s.lives + 1);
-      if (pu.kind === 'slow') s.slowTimer = POWERUP_DURATION;
-      if (pu.kind === 'shield') s.shieldTimer = POWERUP_DURATION;
-      s.particles.push(...spawnExplosion(pu.x + POWERUP_SIZE / 2, pu.y + POWERUP_SIZE / 2, true));
+      const pcx = pu.x + POWERUP_SIZE / 2, pcy = pu.y + POWERUP_SIZE / 2;
+      if (pu.kind === 'life') { s.lives = Math.min(MAX_LIVES_CAP, s.lives + 1); addNotif(s, 'EXTRA LIFE! ❤️', '#FF4757', pcx, pcy - 20); }
+      else if (pu.kind === 'slow') { s.slowTimer = POWERUP_DURATION; addNotif(s, 'SLOW MODE! ❄️', '#00BFFF', pcx, pcy - 20); }
+      else if (pu.kind === 'shield') { s.shieldTimer = POWERUP_DURATION; addNotif(s, 'SHIELD UP! 🛡️', '#FFD866', pcx, pcy - 20); }
+      else if (pu.kind === 'fast') { s.fastTimer = BAD_EFFECT_DURATION; addNotif(s, 'SPEED UP! ⚡', '#C850C0', pcx, pcy - 20); }
+      else if (pu.kind === 'lose_life') { s.lives = Math.max(0, s.lives - 1); addNotif(s, 'OUCH! 💀', '#FF2D2D', pcx, pcy - 20); }
+      s.particles.push(...spawnExplosion(pcx, pcy, !pu.bad));
       return false;
     }
     return true;
   });
 
+  // Update notifications (float up + fade)
+  s.notifs = s.notifs.filter(n => {
+    n.y -= 0.8;
+    n.life--;
+    return n.life > 0;
+  });
+
   // Decrement timers
   if (s.slowTimer > 0) s.slowTimer--;
   if (s.shieldTimer > 0) s.shieldTimer--;
+  if (s.fastTimer > 0) s.fastTimer--;
 
   if (s.lives <= 0) s.over = true;
 }

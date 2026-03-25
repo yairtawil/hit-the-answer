@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#06080F"/>
+  <!-- Nose -->
+  <polygon points="32,8 22,26 42,26" fill="#7C9DFF"/>
+  <!-- Body -->
+  <rect x="23" y="26" width="18" height="14" rx="2" fill="#4A6CF7"/>
+  <!-- Left wing -->
+  <polygon points="12,44 12,32 22,44" fill="#3A5BD7"/>
+  <!-- Right wing -->
+  <polygon points="52,44 52,32 42,44" fill="#3A5BD7"/>
+  <!-- Flame center -->
+  <ellipse cx="32" cy="48" rx="5" ry="7" fill="#FF9F43" opacity="0.9"/>
+  <!-- Flame left -->
+  <ellipse cx="24" cy="48" rx="4" ry="5" fill="#FF9F43" opacity="0.7"/>
+  <!-- Flame right -->
+  <ellipse cx="40" cy="48" rx="4" ry="5" fill="#FF9F43" opacity="0.7"/>
+  <!-- Star accents -->
+  <circle cx="8" cy="10" r="1.5" fill="#fff" opacity="0.6"/>
+  <circle cx="56" cy="14" r="1" fill="#fff" opacity="0.4"/>
+  <circle cx="52" cy="56" r="1.5" fill="#fff" opacity="0.5"/>
+  <circle cx="10" cy="54" r="1" fill="#fff" opacity="0.3"/>
+</svg>
