@@ -12,9 +12,10 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import {
   SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
+  POWERUP_SIZE, POWERUP_DURATION,
   DRAG_THRESHOLD, TAP_MAX_DURATION,
   type GameState, type Star,
-  makeState, tickGame, shipY,
+  makeState, tickGame, shipY, shipScale,
 } from '@hit-the-answer/common';
 
 const { width: sw, height: sh } = Dimensions.get('window');
@@ -93,6 +94,7 @@ export default function App(): React.JSX.Element {
 
   const s = g.current;
   const sy = shipY(sh);
+  const sc = shipScale(s.shipLevel);
 
   const starViews = stars.map((st, i) => (
     <View
@@ -110,6 +112,13 @@ export default function App(): React.JSX.Element {
       ]}
     />
   ));
+
+  // Ship colors based on level
+  const noseColor = s.shipLevel >= 1 ? '#A3BFFF' : '#7C9DFF';
+  const wingColor = s.shipLevel >= 3 ? '#6B8CFF' : s.shipLevel >= 2 ? '#5577EE' : '#3A5BD7';
+  const flameCount = s.shipLevel >= 3 ? 3 : s.shipLevel >= 2 ? 2 : 1;
+
+  const maxDisplay = Math.max(MAX_LIVES, s.lives);
 
   if (s.over) {
     return (
@@ -138,13 +147,40 @@ export default function App(): React.JSX.Element {
 
       <View style={styles.hud}>
         <Text style={styles.livesText}>
-          {'♥'.repeat(s.lives)}{'♡'.repeat(MAX_LIVES - s.lives)}
+          {'♥'.repeat(s.lives)}{'♡'.repeat(maxDisplay - s.lives)}
         </Text>
         <View style={styles.questionBox}>
           <Text style={styles.qText}>{s.question.text} = ?</Text>
         </View>
-        <Text style={styles.scoreText}>{s.score}</Text>
+        <View style={styles.scoreCol}>
+          <Text style={styles.scoreText}>{s.score}</Text>
+          {s.streak > 0 && (
+            <Text style={[styles.streakText, {
+              color: s.shipLevel >= 4 ? '#FFD866' : s.shipLevel >= 2 ? '#A3BFFF' : '#4ADE80',
+            }]}>
+              🔥 x{s.streak}
+            </Text>
+          )}
+        </View>
       </View>
+
+      {/* Active power-up effect indicators */}
+      {(s.shieldTimer > 0 || s.slowTimer > 0) && (
+        <View style={styles.effectsRow}>
+          {s.shieldTimer > 0 && (
+            <View style={styles.effectPill}>
+              <View style={[styles.effectBar, { backgroundColor: '#FFD866', width: `${(s.shieldTimer / POWERUP_DURATION) * 100}%` as any }]} />
+              <Text style={styles.effectLabel}>🛡️ Shield</Text>
+            </View>
+          )}
+          {s.slowTimer > 0 && (
+            <View style={styles.effectPill}>
+              <View style={[styles.effectBar, { backgroundColor: '#00BFFF', width: `${(s.slowTimer / POWERUP_DURATION) * 100}%` as any }]} />
+              <Text style={styles.effectLabel}>❄️ Slow</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {s.numbers.map(n => (
         <View key={n.id} style={[styles.numBubble, { left: n.x, top: n.y }]}>
@@ -155,6 +191,21 @@ export default function App(): React.JSX.Element {
       {s.bullets.map(b => (
         <View key={b.id} style={[styles.bullet, { left: b.x, top: b.y }]}>
           <View style={styles.bulletGlow} />
+        </View>
+      ))}
+
+      {/* Power-ups */}
+      {s.powerups.map(pu => (
+        <View key={pu.id} style={[styles.powerup, {
+          left: pu.x,
+          top: pu.y,
+          borderColor: pu.kind === 'life' ? '#FF4757' : pu.kind === 'slow' ? '#00BFFF' : '#FFD866',
+          backgroundColor: pu.kind === 'life' ? 'rgba(255,71,87,0.25)' : pu.kind === 'slow' ? 'rgba(0,191,255,0.25)' : 'rgba(255,216,102,0.25)',
+          shadowColor: pu.kind === 'life' ? '#FF4757' : pu.kind === 'slow' ? '#00BFFF' : '#FFD866',
+        }]}>
+          <Text style={styles.powerupIcon}>
+            {pu.kind === 'life' ? '♥' : pu.kind === 'slow' ? '❄️' : '🛡️'}
+          </Text>
         </View>
       ))}
 
@@ -174,12 +225,45 @@ export default function App(): React.JSX.Element {
         />
       ))}
 
-      <View style={[styles.ship, { left: s.shipX, top: sy }]}>
-        <View style={styles.shipNose} />
+      {/* Ship with level-based scaling and visuals */}
+      <View style={[styles.ship, {
+        left: s.shipX,
+        top: sy,
+        transform: [{ scale: sc }],
+        shadowColor: s.shipLevel >= 4 ? '#FFD866' : s.shipLevel >= 2 ? '#7C9DFF' : 'transparent',
+        shadowRadius: s.shipLevel >= 4 ? 16 : s.shipLevel >= 2 ? 10 : 0,
+        shadowOpacity: s.shipLevel >= 2 ? 0.8 : 0,
+        shadowOffset: { width: 0, height: 0 },
+      }]}>
+        <View style={[styles.shipNose, {
+          borderBottomColor: noseColor,
+        }]} />
+        {s.shipLevel >= 1 && (
+          <View style={[styles.shipNoseAccent, {
+            borderColor: s.shipLevel >= 4 ? '#FFD866' : '#00E5FF',
+          }]} />
+        )}
         <View style={styles.shipBody} />
-        <View style={styles.shipWingL} />
-        <View style={styles.shipWingR} />
-        <View style={styles.shipFlame} />
+        <View style={[styles.shipWingL, { borderRightColor: wingColor }]} />
+        <View style={[styles.shipWingR, { borderLeftColor: wingColor }]} />
+        {/* Wing tip glows for level 2+ */}
+        {s.shipLevel >= 2 && (
+          <>
+            <View style={[styles.wingTipL, {
+              backgroundColor: s.shipLevel >= 4 ? '#FFD866' : '#A3BFFF',
+            }]} />
+            <View style={[styles.wingTipR, {
+              backgroundColor: s.shipLevel >= 4 ? '#FFD866' : '#A3BFFF',
+            }]} />
+          </>
+        )}
+        {/* Flames */}
+        <View style={styles.flameRow}>
+          {flameCount >= 2 && <View style={[styles.shipFlame, { marginRight: 2 }]} />}
+          <View style={styles.shipFlame} />
+          {flameCount >= 2 && <View style={[styles.shipFlame, { marginLeft: 2 }]} />}
+          {flameCount >= 3 && <View style={[styles.shipFlame, { position: 'absolute', top: -4 }]} />}
+        </View>
       </View>
 
       <Text style={styles.hint}>Drag to move · Tap to shoot</Text>
@@ -201,7 +285,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     zIndex: 10,
   },
-  livesText: { fontSize: 22, color: '#FF4757', width: 76 },
+  livesText: { fontSize: 22, color: '#FF4757', width: 100 },
   questionBox: {
     backgroundColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: 16,
@@ -211,7 +295,38 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,216,102,0.2)',
   },
   qText: { fontSize: 22, fontWeight: '800', color: '#FFD866' },
-  scoreText: { fontSize: 24, fontWeight: '800', color: '#fff', width: 76, textAlign: 'right' },
+  scoreCol: { width: 76, alignItems: 'flex-end' },
+  scoreText: { fontSize: 24, fontWeight: '800', color: '#fff', textAlign: 'right' },
+  streakText: { fontSize: 12, fontWeight: '700', marginTop: 2 },
+  effectsRow: {
+    position: 'absolute',
+    top: 92,
+    right: 16,
+    zIndex: 10,
+    gap: 4,
+  },
+  effectPill: {
+    width: 80,
+    height: 20,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  effectBar: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 8,
+    opacity: 0.4,
+  },
+  effectLabel: {
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: '700',
+  },
   numBubble: {
     position: 'absolute',
     width: NUM_SIZE,
@@ -240,12 +355,37 @@ const styles = StyleSheet.create({
     borderRadius: (BULLET_W + 6) / 2,
     backgroundColor: 'rgba(255,216,102,0.2)',
   },
+  powerup: {
+    position: 'absolute',
+    width: POWERUP_SIZE,
+    height: POWERUP_SIZE,
+    borderRadius: POWERUP_SIZE / 2,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  powerupIcon: { fontSize: 16 },
   ship: { position: 'absolute', width: SHIP_W, height: SHIP_W, alignItems: 'center' },
   shipNose: {
     width: 0, height: 0,
     borderLeftWidth: 12, borderRightWidth: 12, borderBottomWidth: 18,
     borderLeftColor: 'transparent', borderRightColor: 'transparent',
     borderBottomColor: '#7C9DFF',
+  },
+  shipNoseAccent: {
+    position: 'absolute',
+    top: 0,
+    width: 24,
+    height: 18,
+    borderWidth: 1.5,
+    borderColor: '#00E5FF',
+    backgroundColor: 'transparent',
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+    opacity: 0.6,
   },
   shipBody: {
     width: 26, height: 18,
@@ -264,11 +404,34 @@ const styles = StyleSheet.create({
     borderTopWidth: 14, borderLeftWidth: 10,
     borderTopColor: 'transparent', borderLeftColor: '#3A5BD7',
   },
+  wingTipL: {
+    position: 'absolute',
+    left: 0,
+    bottom: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    opacity: 0.9,
+  },
+  wingTipR: {
+    position: 'absolute',
+    right: 0,
+    bottom: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    opacity: 0.9,
+  },
+  flameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -2,
+  },
   shipFlame: {
     width: 10, height: 12,
     backgroundColor: '#FF9F43',
     borderRadius: 5,
-    marginTop: -2,
     opacity: 0.85,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

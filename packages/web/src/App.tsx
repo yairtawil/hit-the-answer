@@ -1,21 +1,50 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
+  POWERUP_SIZE, POWERUP_DURATION,
   type GameState, type Star,
-  makeState, tickGame, shipY,
+  makeState, tickGame, shipY, shipScale,
 } from '@hit-the-answer/common';
 
 const KEYBOARD_SPEED = 6;
 
-function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  // Nose (triangle pointing up)
-  ctx.fillStyle = '#7C9DFF';
+function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number, level: number) {
+  const sc = shipScale(level);
+  const cx = x + SHIP_W / 2;
+  const cy = y + SHIP_W / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(sc, sc);
+  ctx.translate(-cx, -cy);
+
+  // Level 4 golden aura
+  if (level >= 4) {
+    ctx.shadowColor = '#FFD866';
+    ctx.shadowBlur = 24;
+  } else if (level >= 2) {
+    ctx.shadowColor = '#7C9DFF';
+    ctx.shadowBlur = 12;
+  }
+
+  // Nose
+  const noseColor = level >= 1 ? '#A3BFFF' : '#7C9DFF';
+  ctx.fillStyle = noseColor;
   ctx.beginPath();
   ctx.moveTo(x + SHIP_W / 2, y);
   ctx.lineTo(x + SHIP_W / 2 - 12, y + 18);
   ctx.lineTo(x + SHIP_W / 2 + 12, y + 18);
   ctx.closePath();
   ctx.fill();
+
+  // Level 1+ cyan accent stroke on nose
+  if (level >= 1) {
+    ctx.strokeStyle = level >= 4 ? '#FFD866' : '#00E5FF';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.shadowBlur = 0;
 
   // Body
   ctx.fillStyle = '#4A6CF7';
@@ -24,8 +53,11 @@ function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.rect(bodyX, y + 18, 26, 18);
   ctx.fill();
 
+  // Wings
+  const wingColor = level >= 3 ? '#6B8CFF' : level >= 2 ? '#5577EE' : '#3A5BD7';
+  ctx.fillStyle = wingColor;
+
   // Left wing
-  ctx.fillStyle = '#3A5BD7';
   ctx.beginPath();
   ctx.moveTo(x + 2, y + SHIP_W - 8);
   ctx.lineTo(x + 2, y + SHIP_W - 8 - 14);
@@ -41,13 +73,70 @@ function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.closePath();
   ctx.fill();
 
-  // Flame
+  // Wing tip glow for level 2+
+  if (level >= 2) {
+    ctx.shadowColor = level >= 4 ? '#FFD866' : '#7C9DFF';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = level >= 4 ? '#FFD866' : '#A3BFFF';
+    ctx.beginPath();
+    ctx.arc(x + 2, y + SHIP_W - 8, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + SHIP_W - 2, y + SHIP_W - 8, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Flames
+  const flameCount = level >= 3 ? 3 : level >= 2 ? 2 : 1;
+  const flameOffsets = flameCount === 3 ? [-8, 0, 8] : flameCount === 2 ? [-5, 5] : [0];
+  const flameY = y + 36 + 6;
+
   ctx.fillStyle = '#FF9F43';
   ctx.globalAlpha = 0.85;
-  ctx.beginPath();
-  ctx.ellipse(x + SHIP_W / 2, y + 36 + 6, 5, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
+  for (const off of flameOffsets) {
+    ctx.beginPath();
+    ctx.ellipse(x + SHIP_W / 2 + off, flameY, 5, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawPowerUp(ctx: CanvasRenderingContext2D, kind: string, px: number, py: number, t: number) {
+  const bob = Math.sin(t * 0.005) * 3;
+  const cx = px + POWERUP_SIZE / 2;
+  const cy = py + POWERUP_SIZE / 2 + bob;
+
+  // Glow circle background
+  const color = kind === 'life' ? '#FF4757' : kind === 'slow' ? '#00BFFF' : '#FFD866';
+  const bgColor = kind === 'life' ? 'rgba(255,71,87,0.25)' : kind === 'slow' ? 'rgba(0,191,255,0.25)' : 'rgba(255,216,102,0.25)';
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.arc(cx, cy, POWERUP_SIZE / 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Border
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Icon
+  ctx.font = '18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  if (kind === 'life') ctx.fillText('♥', cx, cy);
+  else if (kind === 'slow') ctx.fillText('❄', cx, cy);
+  else ctx.fillText('🛡', cx, cy);
+
+  ctx.restore();
 }
 
 function draw(
@@ -58,6 +147,7 @@ function draw(
   sh: number,
 ) {
   const sy = shipY(sh);
+  const now = Date.now();
 
   // Background
   ctx.fillStyle = '#06080F';
@@ -102,6 +192,11 @@ function draw(
     ctx.shadowBlur = 0;
   }
 
+  // Power-ups
+  for (const pu of s.powerups) {
+    drawPowerUp(ctx, pu.kind, pu.x, pu.y, now);
+  }
+
   // Particles
   for (const p of s.particles) {
     ctx.globalAlpha = p.life / p.maxLife;
@@ -113,20 +208,22 @@ function draw(
   ctx.globalAlpha = 1;
 
   // Ship
-  drawShip(ctx, s.shipX, sy);
+  drawShip(ctx, s.shipX, sy, s.shipLevel);
 
-  // HUD
+  // HUD — lives
   ctx.textBaseline = 'middle';
   ctx.font = '22px sans-serif';
   ctx.fillStyle = '#FF4757';
   ctx.textAlign = 'left';
-  ctx.fillText('♥'.repeat(s.lives) + '♡'.repeat(MAX_LIVES - s.lives), 20, 68);
+  const maxDisplay = Math.max(MAX_LIVES, s.lives);
+  ctx.fillText('♥'.repeat(s.lives) + '♡'.repeat(maxDisplay - s.lives), 20, 68);
 
+  // HUD — question
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.font = 'bold 22px sans-serif';
   const qMetrics = ctx.measureText(`${s.question.text} = ?`);
   const qPadX = 16;
-  const qPadY = 6;
   const qW = qMetrics.width + qPadX * 2;
   const qH = 36;
   ctx.beginPath();
@@ -139,10 +236,51 @@ function draw(
   ctx.font = 'bold 22px sans-serif';
   ctx.fillText(`${s.question.text} = ?`, sw / 2, 68);
 
+  // HUD — score + streak
   ctx.textAlign = 'right';
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 24px sans-serif';
-  ctx.fillText(String(s.score), sw - 20, 68);
+  ctx.fillText(String(s.score), sw - 20, 60);
+
+  if (s.streak > 0) {
+    ctx.fillStyle = s.shipLevel >= 4 ? '#FFD866' : s.shipLevel >= 2 ? '#A3BFFF' : '#4ADE80';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`🔥 x${s.streak}`, sw - 20, 82);
+  }
+
+  // HUD — active power-up effects
+  let effectY = 100;
+  if (s.shieldTimer > 0) {
+    const pct = s.shieldTimer / POWERUP_DURATION;
+    ctx.fillStyle = 'rgba(255,216,102,0.15)';
+    ctx.beginPath();
+    ctx.roundRect(sw - 90, effectY, 70, 18, 6);
+    ctx.fill();
+    ctx.fillStyle = '#FFD866';
+    ctx.beginPath();
+    ctx.roundRect(sw - 90, effectY, 70 * pct, 18, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🛡 Shield', sw - 55, effectY + 10);
+    effectY += 24;
+  }
+  if (s.slowTimer > 0) {
+    const pct = s.slowTimer / POWERUP_DURATION;
+    ctx.fillStyle = 'rgba(0,191,255,0.15)';
+    ctx.beginPath();
+    ctx.roundRect(sw - 90, effectY, 70, 18, 6);
+    ctx.fill();
+    ctx.fillStyle = '#00BFFF';
+    ctx.beginPath();
+    ctx.roundRect(sw - 90, effectY, 70 * pct, 18, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('❄ Slow', sw - 55, effectY + 10);
+  }
 
   // Hint
   ctx.textAlign = 'center';
