@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ipconfig getifaddr:*)",
+      "Bash(node:*)",
+      "Bash(npm install:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npm ls:*)"
+    ]
+  }
+}
