@@ -344,21 +344,23 @@ function drawTitleScreen(
   }
   ctx.globalAlpha = 1;
 
-  const cy = sh / 2 - 60;
+  const cy = sh * 0.28;
 
+  // Ship icon (smaller, cleaner)
   ctx.save();
-  const shipCx = sw / 2, shipCy = cy - 80;
-  ctx.translate(shipCx, shipCy); ctx.scale(2.2, 2.2); ctx.translate(-shipCx, -shipCy);
+  const shipCx = sw / 2, shipCy = cy - 50;
+  const shipSc = 1.6;
+  ctx.translate(shipCx, shipCy); ctx.scale(shipSc, shipSc); ctx.translate(-shipCx, -shipCy);
   drawShip(ctx, shipCx - SHIP_W / 2, shipCy - SHIP_W / 2, 2, shipT);
   ctx.restore();
 
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = bgT.light ? '#B45309' : '#FFD866'; ctx.font = 'bold 52px sans-serif';
-  ctx.fillText('HIT THE', sw / 2, cy + 10);
-  ctx.fillStyle = shipT.body; ctx.font = 'bold 56px sans-serif';
+  ctx.fillStyle = bgT.light ? '#B45309' : '#FFD866'; ctx.font = 'bold 42px sans-serif';
+  ctx.fillText('HIT THE', sw / 2, cy + 20);
+  ctx.fillStyle = shipT.body; ctx.font = 'bold 46px sans-serif';
   ctx.fillText('ANSWER', sw / 2, cy + 68);
-  ctx.fillStyle = bgT.light ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)'; ctx.font = '16px sans-serif';
-  ctx.fillText('Shoot the right number!', sw / 2, cy + 110);
+  ctx.fillStyle = bgT.light ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)'; ctx.font = '14px sans-serif';
+  ctx.fillText('Shoot the right number!', sw / 2, cy + 100);
 }
 
 // ─── Theme Picker Component ─────────────────────────────────────────────────
@@ -622,9 +624,9 @@ export default function App() {
 
       {/* Title screen */}
       {!started && (
-        <div style={{ ...overlayBase, justifyContent: 'flex-end', paddingBottom: '6%' }}>
+        <div style={{ ...overlayBase, justifyContent: 'flex-end', paddingBottom: '4%', gap: 12 }}>
           <button onClick={() => { setStarted(true); setGameKey(k => k + 1); }}
-            style={{ ...btnStyle, fontSize: 22, padding: '18px 56px', letterSpacing: 3, boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
+            style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, whiteSpace: 'nowrap', width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
             START GAME
           </button>
           <ThemePicker bgId={bgThemeId} shipId={shipThemeId} shapeId={numShapeId} onBg={setBgThemeId} onShip={setShipThemeId} onShape={setNumShapeId} />
