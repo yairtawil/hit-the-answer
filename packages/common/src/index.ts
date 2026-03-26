@@ -351,6 +351,29 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
   }
   s.bullets = keptBullets;
 
+  // Bullet–powerup collisions
+  const survivingBullets: Bullet[] = [];
+  for (const b of s.bullets) {
+    let hit = false;
+    for (let i = s.powerups.length - 1; i >= 0; i--) {
+      const pu = s.powerups[i];
+      if (overlaps(b.x, b.y, BULLET_W, BULLET_H, pu.x, pu.y, POWERUP_SIZE, POWERUP_SIZE)) {
+        hit = true;
+        const pcx = pu.x + POWERUP_SIZE / 2, pcy = pu.y + POWERUP_SIZE / 2;
+        if (pu.kind === 'life') { s.lives = Math.min(MAX_LIVES_CAP, s.lives + 1); addNotif(s, 'EXTRA LIFE! ❤️', '#FF4757', pcx, pcy - 20); }
+        else if (pu.kind === 'slow') { s.slowTimer = POWERUP_DURATION; addNotif(s, 'SLOW MODE! ❄️', '#00BFFF', pcx, pcy - 20); }
+        else if (pu.kind === 'shield') { s.shieldTimer = POWERUP_DURATION; addNotif(s, 'SHIELD UP! 🛡️', '#FFD866', pcx, pcy - 20); }
+        else if (pu.kind === 'fast') { s.fastTimer = BAD_EFFECT_DURATION; addNotif(s, 'SPEED UP! ⚡', '#C850C0', pcx, pcy - 20); }
+        else if (pu.kind === 'lose_life') { s.lives = Math.max(0, s.lives - 1); addNotif(s, 'OUCH! 💀', '#FF2D2D', pcx, pcy - 20); }
+        s.particles.push(...spawnExplosion(pcx, pcy, !pu.bad));
+        s.powerups.splice(i, 1);
+        break;
+      }
+    }
+    if (!hit) survivingBullets.push(b);
+  }
+  s.bullets = survivingBullets;
+
   // New round (don't clear powerups)
   if (newRound) {
     const q = createQuestion();

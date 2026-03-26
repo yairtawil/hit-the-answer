@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, Dimensions, PanResponder, TouchableOpacity, BackHandler, ScrollView,
+  Platform, StatusBar as RNStatusBar,
   type GestureResponderEvent, type PanResponderGestureState,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +16,8 @@ import {
 } from '@hit-the-answer/common';
 
 const { width: sw, height: sh } = Dimensions.get('window');
+const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44;
+const HUD_TOP = STATUS_BAR_HEIGHT + 8;
 
 // ─── Theme Picker ────────────────────────────────────────────────────────────
 
@@ -57,7 +60,7 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
   return (
     <View style={tp.root}>
       <Text style={tp.label}>BACKGROUND</Text>
-      <View style={tp.row}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={tp.row}>
         {BG_THEMES.map(t => (
           <TouchableOpacity key={t.id} activeOpacity={0.7} onPress={() => onBg(t.id)}
             style={[tp.swatch, { backgroundColor: t.bg }, bgId === t.id && tp.swatchSel]}>
@@ -67,7 +70,7 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
             {bgId === t.id && <View style={tp.check}><Text style={tp.checkText}>✓</Text></View>}
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
       <Text style={[tp.label, { marginTop: 8 }]}>SHIP</Text>
       <View style={tp.row}>
         {SHIP_THEMES.map(t => (
@@ -180,8 +183,8 @@ export default function App(): React.JSX.Element {
       rerender(c => c + 1);
       return true;
     };
-    BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => BackHandler.removeEventListener('hardwareBackPress', onBack);
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
   }, [gameKey]);
 
   const pan = useRef(
@@ -482,9 +485,9 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   star: { position: 'absolute' },
   hud: {
-    position: 'absolute', top: 52, left: 0, right: 0,
+    position: 'absolute', top: HUD_TOP, left: 0, right: 0,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, zIndex: 10,
+    paddingHorizontal: 16, zIndex: 10,
   },
   livesRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pauseBtn: {
@@ -501,10 +504,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,216,102,0.2)',
   },
   qText: { fontSize: 22, fontWeight: '800', color: '#FFD866' },
-  scoreCol: { width: 76, alignItems: 'flex-end' },
+  scoreCol: { minWidth: 76, alignItems: 'flex-end' },
   scoreText: { fontSize: 24, fontWeight: '800', color: '#fff', textAlign: 'right' },
   streakText: { fontSize: 12, fontWeight: '700', marginTop: 2 },
-  effectsRow: { position: 'absolute', top: 92, right: 16, zIndex: 10, gap: 4 },
+  effectsRow: { position: 'absolute', top: HUD_TOP + 44, right: 16, zIndex: 10, gap: 4 },
   effectPill: { width: 80, height: 20, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   effectBar: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 8, opacity: 0.4 },
   effectLabel: { fontSize: 10, color: '#fff', fontWeight: '700' },

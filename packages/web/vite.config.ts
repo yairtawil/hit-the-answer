@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icon-192.svg', 'icon-512.svg'],
+      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Hit the Answer',
         short_name: 'HitAnswer',
@@ -21,15 +21,15 @@ export default defineConfig({
         start_url: '/hit-the-answer/',
         icons: [
           {
-            src: 'icon-192.svg',
+            src: 'icon-192.png',
             sizes: '192x192',
-            type: 'image/svg+xml',
+            type: 'image/png',
             purpose: 'any',
           },
           {
-            src: 'icon-512.svg',
+            src: 'icon-512.png',
             sizes: '512x512',
-            type: 'image/svg+xml',
+            type: 'image/png',
             purpose: 'any maskable',
           },
         ],

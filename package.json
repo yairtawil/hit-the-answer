@@ -2,6 +2,7 @@
   "name": "hit-the-answer",
   "private": true,
   "version": "1.0.0",
+  "main": "packages/mobile/index.ts",
   "workspaces": [
     "packages/common",
     "packages/mobile",
