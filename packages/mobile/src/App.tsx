@@ -360,12 +360,19 @@ export default function App(): React.JSX.Element {
         const rs = rockScale(n.hp);
         const rSize = NUM_SIZE * rs;
         const damaged = n.hp < n.maxHp;
+        // Base color: mid-tone — gradients are faked with overlay Views
         const rockBg = damaged
-          ? (lt ? 'rgba(160,145,130,0.9)' : 'rgba(75,65,55,0.9)')
-          : (lt ? 'rgba(180,170,155,0.9)' : 'rgba(90,80,70,0.9)');
-        const rockBorder = lt ? '#8B7355' : '#A0906E';
+          ? (lt ? '#a09080' : '#4e3e2e')
+          : (lt ? '#aea298' : '#7a6a5a');
+        const rockBorder = lt ? 'rgba(90,72,50,0.7)' : 'rgba(150,130,100,0.55)';
         const fontSize = Math.round(16 * rs);
         const textCol = lt ? '#3A2E1F' : '#E8E0D0';
+        // Unique border-radius from id hash so each rock has its own silhouette
+        let seed = 0;
+        for (let i = 0; i < n.id.length; i++) seed = (((seed << 5) - seed) + n.id.charCodeAt(i)) | 0;
+        seed = Math.abs(seed) || 42;
+        const rr = (min: number, max: number) => { seed = (seed * 1664525 + 1013904223) >>> 0; return min + (seed / 0x100000000) * (max - min); };
+        const br = [rr(4, rSize * 0.35), rr(rSize * 0.3, rSize * 0.55), rr(4, rSize * 0.3), rr(rSize * 0.35, rSize * 0.55)];
         return (
           <View key={n.id} style={{
             position: 'absolute',
@@ -373,21 +380,36 @@ export default function App(): React.JSX.Element {
             top: n.y + NUM_SIZE / 2 - rSize / 2,
             width: rSize, height: rSize,
             backgroundColor: rockBg,
-            borderWidth: 2, borderColor: rockBorder,
-            borderTopLeftRadius: 6, borderTopRightRadius: rSize * 0.4,
-            borderBottomLeftRadius: rSize * 0.45, borderBottomRightRadius: 10,
+            borderWidth: 1.5, borderColor: rockBorder,
+            borderTopLeftRadius: br[0], borderTopRightRadius: br[1],
+            borderBottomLeftRadius: br[2], borderBottomRightRadius: br[3],
+            overflow: 'hidden',
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <Text style={{ color: textCol, fontSize, fontWeight: '700' }}>{n.value}</Text>
+            {/* Lighter top-left highlight (fakes top gradient stop) */}
+            <View style={{
+              position: 'absolute', top: 0, left: 0,
+              width: rSize * 0.65, height: rSize * 0.55,
+              backgroundColor: lt ? 'rgba(201,184,169,0.55)' : 'rgba(160,144,128,0.25)',
+              borderBottomRightRadius: rSize * 0.5,
+            }} />
+            {/* Darker bottom shadow (fakes bottom gradient stop) */}
+            <View style={{
+              position: 'absolute', bottom: 0, right: 0,
+              width: rSize * 0.7, height: rSize * 0.55,
+              backgroundColor: lt ? 'rgba(100,80,56,0.22)' : 'rgba(25,15,8,0.45)',
+              borderTopLeftRadius: rSize * 0.5,
+            }} />
+            <Text style={{ color: textCol, fontSize, fontWeight: '700', zIndex: 1 }}>{n.value}</Text>
             {/* Crack overlay for damaged rocks */}
             {damaged && (
-              <View style={{ position: 'absolute', top: '25%', left: '30%', width: 2, height: '50%',
-                backgroundColor: lt ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.12)', borderRadius: 1,
+              <View style={{ position: 'absolute', top: '25%', left: '30%', width: 1.5, height: '50%',
+                backgroundColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.15)', borderRadius: 1,
                 transform: [{ rotate: '20deg' }] }} />
             )}
             {n.maxHp - n.hp >= 2 && (
-              <View style={{ position: 'absolute', top: '20%', right: '25%', width: 2, height: '40%',
-                backgroundColor: lt ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.12)', borderRadius: 1,
+              <View style={{ position: 'absolute', top: '20%', right: '25%', width: 1.5, height: '40%',
+                backgroundColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.15)', borderRadius: 1,
                 transform: [{ rotate: '-15deg' }] }} />
             )}
             {/* HP pips — only after hit */}

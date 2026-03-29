@@ -3,11 +3,76 @@ import {
   SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
   POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, NOTIF_LIFETIME,
   BG_THEMES, SHIP_THEMES, NUM_SHAPES,
-  type GameState, type Star, type BgTheme, type ShipTheme,
+  type GameState, type Star, type BgTheme, type ShipTheme, type SoundEvent,
   makeState, tickGame, shipY, shipScale, rockScale, getBgTheme, getShipTheme,
 } from '@hit-the-answer/common';
 
 const KEYBOARD_SPEED = 6;
+
+// ─── Sound engine ─────────────────────────────────────────────────────────────
+
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+  return _audioCtx;
+}
+
+function playFire(muted: boolean) {
+  if (muted) return;
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(900, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.07);
+    gain.gain.setValueAtTime(0.07, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.07);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.07);
+  } catch (_) { /* ignore audio errors */ }
+}
+
+function playSound(ev: SoundEvent, muted: boolean) {
+  if (muted) return;
+  try {
+    const ctx = getAudioCtx();
+    if (ev === 'goodHit') {
+      // Pleasant rising ding
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.18);
+    } else if (ev === 'badHit') {
+      // Low sawtooth thud
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(180, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(45, ctx.currentTime + 0.22);
+      gain.gain.setValueAtTime(0.22, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.22);
+    } else if (ev === 'bombHit') {
+      // Short deep thud with noise-like overtone
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.28, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+    }
+  } catch (_) { /* ignore audio errors */ }
+}
 
 // ─── Drawing helpers ─────────────────────────────────────────────────────────
 
@@ -125,21 +190,7 @@ function drawPowerUp(ctx: CanvasRenderingContext2D, kind: string, bad: boolean, 
 
 function drawNumShape(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, shapeId: string) {
   ctx.beginPath();
-  if (shapeId === 'stone') {
-    // Irregular rocky polygon
-    const pts = [
-      [cx - r * 0.4, cy - r * 0.95],
-      [cx + r * 0.5, cy - r * 0.85],
-      [cx + r * 0.95, cy - r * 0.25],
-      [cx + r * 0.8, cy + r * 0.55],
-      [cx + r * 0.3, cy + r * 0.92],
-      [cx - r * 0.4, cy + r * 0.88],
-      [cx - r * 0.9, cy + r * 0.35],
-      [cx - r * 0.85, cy - r * 0.4],
-    ];
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  } else if (shapeId === 'hex') {
+  if (shapeId === 'hex') {
     for (let i = 0; i < 6; i++) {
       const a = Math.PI / 3 * i - Math.PI / 6;
       const px = cx + r * Math.cos(a), py = cy + r * Math.sin(a);
@@ -151,15 +202,89 @@ function drawNumShape(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: 
     ctx.lineTo(cx, cy + r);
     ctx.lineTo(cx - r * 0.75, cy);
   } else {
-    // circle (default)
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
   }
   ctx.closePath();
 }
 
+function buildRockPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, pts: [number, number][]) {
+  const N = pts.length;
+  ctx.beginPath();
+  ctx.moveTo((pts[N - 1][0] + pts[0][0]) / 2, (pts[N - 1][1] + pts[0][1]) / 2);
+  for (let i = 0; i < N; i++) {
+    const next = pts[(i + 1) % N];
+    ctx.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + next[0]) / 2, (pts[i][1] + next[1]) / 2);
+  }
+  ctx.closePath();
+}
+
+function rockPts(cx: number, cy: number, r: number, id: string): [number, number][] {
+  // Deterministic per-rock shape from id
+  let seed = 0;
+  for (let i = 0; i < id.length; i++) seed = (((seed << 5) - seed) + id.charCodeAt(i)) | 0;
+  seed = Math.abs(seed) || 42;
+  const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+
+  const N = 10;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < N; i++) {
+    const baseAngle = (Math.PI * 2 * i) / N - Math.PI / 2;
+    const angleJitter = (rng() - 0.5) * (Math.PI * 2 / N) * 0.45;
+    const radiusFactor = 0.70 + rng() * 0.30;
+    const a = baseAngle + angleJitter;
+    pts.push([cx + Math.cos(a) * r * radiusFactor, cy + Math.sin(a) * r * radiusFactor]);
+  }
+  return pts;
+}
+
+function drawRock(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, id: string, damaged: boolean, lt: boolean) {
+  const pts = rockPts(cx, cy, r, id);
+
+  ctx.save();
+  buildRockPath(ctx, cx, cy, r, pts);
+  ctx.clip();
+
+  // Base gradient: lighter top-left → darker bottom-right
+  const grd = ctx.createLinearGradient(cx - r * 0.6, cy - r * 0.85, cx + r * 0.45, cy + r * 0.85);
+  if (damaged) {
+    grd.addColorStop(0, lt ? '#b0a090' : '#6a5a4a');
+    grd.addColorStop(0.5, lt ? '#9a8878' : '#4e3e2e');
+    grd.addColorStop(1, lt ? '#857060' : '#362616');
+  } else {
+    grd.addColorStop(0, lt ? '#c9b8a9' : '#a09080');
+    grd.addColorStop(0.46, lt ? '#aea298' : '#7a6a5a');
+    grd.addColorStop(1, lt ? '#9e958e' : '#5a4a3a');
+  }
+  ctx.fillStyle = grd;
+  ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+  // Shadow on bottom-left edge for depth
+  const shadowGrd = ctx.createLinearGradient(cx + r * 0.15, cy + r * 0.45, cx - r * 0.65, cy - r * 0.25);
+  shadowGrd.addColorStop(0, 'rgba(37,47,54,0.55)');
+  shadowGrd.addColorStop(0.55, 'rgba(55,71,79,0.15)');
+  shadowGrd.addColorStop(1, 'rgba(69,90,100,0)');
+  ctx.fillStyle = shadowGrd;
+  ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+  // Highlight on upper-left for the 3D stone look
+  const hlGrd = ctx.createRadialGradient(cx - r * 0.22, cy - r * 0.28, 0, cx - r * 0.22, cy - r * 0.28, r * 0.62);
+  hlGrd.addColorStop(0, lt ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.2)');
+  hlGrd.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = hlGrd;
+  ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+  ctx.restore();
+
+  // Outline
+  buildRockPath(ctx, cx, cy, r, pts);
+  ctx.strokeStyle = lt ? 'rgba(90,72,50,0.7)' : 'rgba(150,130,100,0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
 function draw(
   ctx: CanvasRenderingContext2D, s: GameState, stars: Star[],
-  sw: number, sh: number, bgT: BgTheme, shipT: ShipTheme, _shapeId: string,
+  sw: number, sh: number, bgT: BgTheme, shipT: ShipTheme, _shapeId: string, muted: boolean,
 ) {
   const sy = shipY(sh);
   const now = Date.now();
@@ -196,44 +321,108 @@ function draw(
     const r = (NUM_SIZE / 2) * rs;
     const damaged = n.hp < n.maxHp;
 
-    // Rock body — always stone shape
-    const rockFill = lt ? 'rgba(180,170,155,0.9)' : 'rgba(90,80,70,0.9)';
-    const rockStroke = lt ? '#8B7355' : '#A0906E';
-    ctx.fillStyle = damaged ? (lt ? 'rgba(160,145,130,0.9)' : 'rgba(75,65,55,0.9)') : rockFill;
-    ctx.strokeStyle = n.correct ? rockStroke : rockStroke;
-    ctx.lineWidth = 2;
-    drawNumShape(ctx, cx, cy, r, 'stone'); ctx.fill(); ctx.stroke();
+    if (n.bomb) {
+      // Draw bomb rock — dark jagged boulder with fuse
+      const pts = rockPts(cx, cy, r, n.id);
+      ctx.save();
+      buildRockPath(ctx, cx, cy, r, pts);
+      ctx.clip();
 
-    // Crack lines for damaged rocks
-    if (damaged) {
-      ctx.strokeStyle = lt ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(cx - r * 0.3, cy - r * 0.4);
-      ctx.lineTo(cx + r * 0.1, cy);
-      ctx.lineTo(cx - r * 0.15, cy + r * 0.35);
+      // Very dark body with a reddish core
+      const bg = ctx.createLinearGradient(cx - r * 0.6, cy - r * 0.8, cx + r * 0.5, cy + r * 0.9);
+      bg.addColorStop(0, '#3d3530');
+      bg.addColorStop(0.5, '#2a1f1a');
+      bg.addColorStop(1, '#130d08');
+      ctx.fillStyle = bg;
+      ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+      // Red warning glow in center
+      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7);
+      glow.addColorStop(0, 'rgba(220,40,30,0.45)');
+      glow.addColorStop(1, 'rgba(220,40,30,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+      // Highlight
+      const hl = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.3, 0, cx - r * 0.25, cy - r * 0.3, r * 0.5);
+      hl.addColorStop(0, 'rgba(255,255,255,0.18)');
+      hl.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hl;
+      ctx.fillRect(cx - r * 1.1, cy - r * 1.1, r * 2.2, r * 2.2);
+
+      ctx.restore();
+
+      // Outline
+      buildRockPath(ctx, cx, cy, r, pts);
+      ctx.strokeStyle = '#6b3a2a';
+      ctx.lineWidth = 2;
       ctx.stroke();
-      if (n.maxHp - n.hp >= 2) {
-        ctx.beginPath();
-        ctx.moveTo(cx + r * 0.2, cy - r * 0.3);
-        ctx.lineTo(cx + r * 0.35, cy + r * 0.2);
-        ctx.stroke();
+
+      // Fuse on top
+      ctx.save();
+      ctx.strokeStyle = '#c8a84a';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r);
+      ctx.bezierCurveTo(cx + r * 0.25, cy - r * 1.3, cx - r * 0.15, cy - r * 1.55, cx + r * 0.1, cy - r * 1.75);
+      ctx.stroke();
+      // Fuse spark
+      const spark = now % 500 < 250;
+      if (spark) {
+        ctx.fillStyle = '#FFD860';
+        ctx.shadowColor = '#FFD860'; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(cx + r * 0.1, cy - r * 1.75, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
       }
-    }
+      ctx.restore();
 
-    // Number text
-    const fontSize = Math.round(16 * rs);
-    ctx.fillStyle = lt ? '#3A2E1F' : '#E8E0D0'; ctx.font = `bold ${fontSize}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(String(n.value), cx, cy);
+      // Skull icon
+      const skullSize = Math.round(13 * rs);
+      ctx.fillStyle = 'rgba(255,100,80,0.9)'; ctx.font = `${skullSize}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('💀', cx, cy);
+    } else {
+      // Normal answer rock
+      drawRock(ctx, cx, cy, r, n.id, damaged, lt);
 
-    // HP pips — only show after rock has been hit
-    if (n.maxHp > 1 && n.hp < n.maxHp) {
-      for (let h = 0; h < n.maxHp; h++) {
-        const pipX = cx - ((n.maxHp - 1) * 5) / 2 + h * 5;
-        const pipY = cy + r + 6;
-        ctx.fillStyle = h < n.hp ? '#4ADE80' : 'rgba(255,255,255,0.2)';
-        ctx.beginPath(); ctx.arc(pipX, pipY, 2.5, 0, Math.PI * 2); ctx.fill();
+      // Crack lines for damaged rocks (clipped to rock shape)
+      if (damaged) {
+        const pts = rockPts(cx, cy, r, n.id);
+        ctx.save();
+        buildRockPath(ctx, cx, cy, r, pts);
+        ctx.clip();
+        ctx.strokeStyle = lt ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.22)';
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.3, cy - r * 0.4);
+        ctx.lineTo(cx + r * 0.08, cy - r * 0.05);
+        ctx.lineTo(cx - r * 0.12, cy + r * 0.38);
+        ctx.stroke();
+        if (n.maxHp - n.hp >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(cx + r * 0.22, cy - r * 0.28);
+          ctx.lineTo(cx + r * 0.38, cy + r * 0.18);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // Number text
+      const fontSize = Math.round(16 * rs);
+      ctx.fillStyle = lt ? '#3A2E1F' : '#E8E0D0'; ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(n.value), cx, cy);
+
+      // HP pips — only show after rock has been hit
+      if (n.maxHp > 1 && n.hp < n.maxHp) {
+        for (let h = 0; h < n.maxHp; h++) {
+          const pipX = cx - ((n.maxHp - 1) * 5) / 2 + h * 5;
+          const pipY = cy + r + 6;
+          ctx.fillStyle = h < n.hp ? '#4ADE80' : 'rgba(255,255,255,0.2)';
+          ctx.beginPath(); ctx.arc(pipX, pipY, 2.5, 0, Math.PI * 2); ctx.fill();
+        }
       }
     }
   }
@@ -279,6 +468,12 @@ function draw(
   ctx.fillStyle = pauseBtnFill;
   ctx.beginPath(); ctx.roundRect(16, 52, 32, 32, 8); ctx.fill();
   ctx.fillStyle = pauseBarCol; ctx.fillRect(24, 60, 4, 16); ctx.fillRect(32, 60, 4, 16);
+
+  // HUD — mute button (top-left, below pause)
+  ctx.fillStyle = pauseBtnFill;
+  ctx.beginPath(); ctx.roundRect(16, 90, 32, 32, 8); ctx.fill();
+  ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(muted ? '🔇' : '🔊', 32, 106);
 
   // HUD — lives
   ctx.textBaseline = 'middle'; ctx.font = '22px sans-serif'; ctx.fillStyle = '#FF4757'; ctx.textAlign = 'left';
@@ -477,11 +672,17 @@ export default function App() {
   const [bgThemeId, setBgThemeId] = useState(() => localStorage.getItem('hta_bg') ?? 'space');
   const [shipThemeId, setShipThemeId] = useState(() => localStorage.getItem('hta_ship') ?? 'classic');
   const [numShapeId, setNumShapeId] = useState(() => localStorage.getItem('hta_shape') ?? 'circle');
+  const [muted, setMuted] = useState(() => localStorage.getItem('hta_mute') === '1');
+  const mutedRef = useRef(muted);
+
+  // Keep mutedRef in sync so animation loop always sees latest value
+  mutedRef.current = muted;
 
   // Persist settings
   useEffect(() => { localStorage.setItem('hta_bg', bgThemeId); }, [bgThemeId]);
   useEffect(() => { localStorage.setItem('hta_ship', shipThemeId); }, [shipThemeId]);
   useEffect(() => { localStorage.setItem('hta_shape', numShapeId); }, [numShapeId]);
+  useEffect(() => { localStorage.setItem('hta_mute', muted ? '1' : '0'); }, [muted]);
   const scoreRef = useRef(0);
 
   const bgT = getBgTheme(bgThemeId);
@@ -526,12 +727,18 @@ export default function App() {
     };
     const onClick = (e: MouseEvent) => {
       const s = g.current;
+      // Mute button hit area (below pause button)
+      if (e.clientX >= 16 && e.clientX <= 48 && e.clientY >= 90 && e.clientY <= 122) {
+        setMuted(m => !m);
+        return;
+      }
       // Pause button hit area
       if (!s.over && !s.paused && e.clientX >= 16 && e.clientX <= 48 && e.clientY >= 52 && e.clientY <= 84) {
         s.paused = true; setPaused(true);
         return;
       }
       if (s.over || s.paused) return;
+      playFire(mutedRef.current);
       s.bullets.push({
         id: `b${Date.now()}-${Math.random()}`,
         x: s.shipX + SHIP_W / 2 - BULLET_W / 2,
@@ -573,6 +780,7 @@ export default function App() {
         if (keys.current.left) s.shipX = Math.max(0, s.shipX - KEYBOARD_SPEED);
         if (keys.current.right) s.shipX = Math.min(sw - SHIP_W, s.shipX + KEYBOARD_SPEED);
         if (keys.current.space && !keys.current.spacePrev) {
+          playFire(mutedRef.current);
           s.bullets.push({
             id: `b${Date.now()}-${Math.random()}`,
             x: s.shipX + SHIP_W / 2 - BULLET_W / 2,
@@ -581,10 +789,13 @@ export default function App() {
         }
         keys.current.spacePrev = keys.current.space;
         tickGame(s, sw, sh);
-        if (s.over) { scoreRef.current = s.score; draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current); setOver(true); return; }
+        // Drain and play sound events
+        for (const ev of s.soundEvents) playSound(ev, mutedRef.current);
+        s.soundEvents = [];
+        if (s.over) { scoreRef.current = s.score; draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current, mutedRef.current); setOver(true); return; }
       }
 
-      draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current);
+      draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current, mutedRef.current);
 
       // Dim overlay when paused (canvas part)
       if (s.paused) {

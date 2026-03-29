@@ -6,7 +6,7 @@ export const BULLET_H = 18;
 export const BULLET_SPEED = 12;
 export const NUM_SIZE = 48;
 export const ROCK_MAX_HP = 3;
-export const BASE_FALL_SPEED = 1.5;
+export const BASE_FALL_SPEED = 1.0;
 export const ANSWER_COUNT = 5;
 export const MAX_LIVES = 3;
 export const MAX_LIVES_CAP = 5;
@@ -28,6 +28,9 @@ export const BAD_EFFECT_DURATION = 300; // ~5 seconds at 60fps
 export const STREAK_THRESHOLDS = [0, 5, 10, 15, 20];
 export const BULLET_SPEED_BONUS = [0, 2, 4, 6, 8];
 
+// Round transition cooldown — frames to ignore bullet-rock collisions after a new question
+export const ROUND_COOLDOWN_FRAMES = 40;
+
 export function shipY(sh: number): number {
   return sh - 130;
 }
@@ -44,11 +47,11 @@ export function shipScale(level: number): number {
   return 1 + level * 0.1;
 }
 
-/** Visual scale factor for a rock based on its current hp. hp=3 → 1.3x, hp=2 → 1.0x, hp=1 → 0.75x */
+/** Visual scale factor for a rock based on its current hp. */
 export function rockScale(hp: number): number {
-  if (hp >= 3) return 1.3;
-  if (hp === 2) return 1.0;
-  return 0.75;
+  if (hp >= 3) return 1.5;
+  if (hp === 2) return 1.25;
+  return 1.0;
 }
 
 // ─── Themes ──────────────────────────────────────────────────────────────────
@@ -118,7 +121,7 @@ export function getNumShape(id: string): NumShape {
 
 export type Question = { text: string; answer: number };
 export type Bullet = { id: string; x: number; y: number };
-export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number };
+export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number; bomb?: boolean };
 export type Particle = { id: string; x: number; y: number; vx: number; vy: number; color: string; life: number; maxLife: number; size: number };
 export type Star = { x: number; y: number; r: number; o: number };
 
@@ -127,6 +130,8 @@ export type PowerUp = { id: string; kind: PowerUpKind; x: number; y: number; bad
 
 export const NOTIF_LIFETIME = 90; // ~1.5 seconds at 60fps
 export type Notif = { id: string; text: string; color: string; x: number; y: number; life: number; size: number };
+
+export type SoundEvent = 'goodHit' | 'badHit' | 'bombHit';
 
 export type GameState = {
   _key: number;
@@ -152,6 +157,10 @@ export type GameState = {
   shipLevel: number;
   // Notifications
   notifs: Notif[];
+  // Sound events drained each frame by the platform layer
+  soundEvents: SoundEvent[];
+  // Frames remaining where bullets pass through rocks (transition buffer)
+  roundCooldown: number;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -169,7 +178,7 @@ export function createQuestion(): Question {
   return { text: `${a} ${op.sym} ${b}`, answer: op.fn(a, b) };
 }
 
-export function createNumbers(answer: number, sw: number): FallingNum[] {
+export function createNumbers(answer: number, sw: number, score: number): FallingNum[] {
   const vals = new Set<number>([answer]);
   while (vals.size < ANSWER_COUNT) {
     let d = Math.floor(Math.random() * 10) + 1;
@@ -179,19 +188,45 @@ export function createNumbers(answer: number, sw: number): FallingNum[] {
   }
   const arr = Array.from(vals).sort(() => Math.random() - 0.5);
   const gap = sw / (arr.length + 1);
-  return arr.map((value, i) => {
-    const isCorrect = value === answer;
-    const hp = 1 + Math.floor(Math.random() * ROCK_MAX_HP);
+
+  // Max HP ramps up with score so early game is easier
+  const maxHp = score < 3 ? 1 : score < 8 ? 2 : ROCK_MAX_HP;
+
+  const rocks: FallingNum[] = arr.map((value, i) => {
+    const hp = 1 + Math.floor(Math.random() * maxHp);
     return {
       id: `n${Date.now()}-${i}`,
       value,
       x: gap * (i + 1) - NUM_SIZE / 2,
       y: -(NUM_SIZE + Math.random() * 200),
-      correct: isCorrect,
+      correct: value === answer,
       hp,
       maxHp: hp,
     };
   });
+
+  // Bomb rocks appear from score >= 5
+  const bombCount = score < 5 ? 0 : score < 12 ? 1 : 2;
+  for (let b = 0; b < bombCount; b++) {
+    let bx = 0;
+    let attempts = 0;
+    do {
+      bx = NUM_SIZE + Math.random() * (sw - NUM_SIZE * 3);
+      attempts++;
+    } while (attempts < 20 && rocks.some(r => Math.abs(r.x - bx) < NUM_SIZE * 1.6));
+    rocks.push({
+      id: `bomb${Date.now()}-${b}-${Math.random()}`,
+      value: 0,
+      x: bx,
+      y: -(NUM_SIZE + Math.random() * 250),
+      correct: false,
+      hp: 1,
+      maxHp: 1,
+      bomb: true,
+    });
+  }
+
+  return rocks;
 }
 
 export function spawnExplosion(cx: number, cy: number, correct: boolean): Particle[] {
@@ -229,7 +264,7 @@ export function makeState(key: number, sw: number): GameState {
     isDragging: false,
     touchStartTime: 0,
     bullets: [],
-    numbers: createNumbers(q.answer, sw),
+    numbers: createNumbers(q.answer, sw, 0),
     particles: [],
     question: q,
     score: 0,
@@ -243,6 +278,8 @@ export function makeState(key: number, sw: number): GameState {
     streak: 0,
     shipLevel: 0,
     notifs: [],
+    soundEvents: [],
+    roundCooldown: 0,
   };
 }
 
@@ -275,8 +312,12 @@ function maybeSpawnPowerUp(s: GameState, nx: number, ny: number, good: boolean):
 
 export function tickGame(s: GameState, sw: number, sh: number): void {
   const speedMul = s.slowTimer > 0 ? 0.4 : s.fastTimer > 0 ? 1.8 : 1;
-  const fallSpeed = (BASE_FALL_SPEED + s.score * 0.08) * speedMul;
+  // Gentle ramp: starts at 1.0, adds 0.05 per score point
+  const fallSpeed = (BASE_FALL_SPEED + s.score * 0.05) * speedMul;
   const bulletSpeed = BULLET_SPEED + BULLET_SPEED_BONUS[s.shipLevel];
+
+  // Tick down transition cooldown
+  if (s.roundCooldown > 0) s.roundCooldown--;
 
   // Move bullets
   s.bullets = s.bullets
@@ -289,6 +330,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     n.y += fallSpeed;
     if (n.y > sh) {
       if (n.correct) correctFell = true;
+      // bombs just disappear off screen — no penalty
       return false;
     }
     return true;
@@ -298,11 +340,16 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     dropOneLevel(s);
   }
 
-  // Bullet–rock collisions
+  // Bullet–rock collisions (skipped during transition cooldown)
   let newRound = correctFell;
   const keptBullets: Bullet[] = [];
   for (const b of s.bullets) {
-    if (newRound) break; // stop processing bullets once a new round triggers
+    if (newRound) break;
+    if (s.roundCooldown > 0) {
+      // During cooldown bullets pass through everything
+      keptBullets.push(b);
+      continue;
+    }
     let hit = false;
     for (let i = s.numbers.length - 1; i >= 0; i--) {
       const n = s.numbers[i];
@@ -313,10 +360,18 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
       if (overlaps(b.x, b.y, BULLET_W, BULLET_H, rx, ry, rSize, rSize)) {
         hit = true;
         const cx = n.x + NUM_SIZE / 2, cy = n.y + NUM_SIZE / 2;
-        if (n.correct) {
+        if (n.bomb) {
+          // Bomb hit: lose life but NO new round
+          s.numbers.splice(i, 1);
+          s.particles.push(...spawnExplosion(cx, cy, false));
+          if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
+          addNotif(s, '💣 BOOM!', '#FF4444', cx, cy - 30);
+          s.soundEvents.push('bombHit');
+        } else if (n.correct) {
           n.hp--;
           // Chip particles on each hit
           s.particles.push(...spawnExplosion(cx, cy, true).map(p => ({ ...p, size: p.size * 0.7 })));
+          s.soundEvents.push('goodHit');
           if (n.hp <= 0) {
             // Rock destroyed — score + new round
             s.numbers.splice(i, 1);
@@ -342,6 +397,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
           if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
           dropOneLevel(s);
           newRound = true;
+          s.soundEvents.push('badHit');
           maybeSpawnPowerUp(s, n.x, n.y, false);
         }
         break;
@@ -378,8 +434,9 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
   if (newRound) {
     const q = createQuestion();
     s.question = q;
-    s.numbers = createNumbers(q.answer, sw);
+    s.numbers = createNumbers(q.answer, sw, s.score);
     s.bullets = [];
+    s.roundCooldown = ROUND_COOLDOWN_FRAMES;
   }
 
   // Update particles
