@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
-  POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, NOTIF_LIFETIME,
-  BG_THEMES, SHIP_THEMES, NUM_SHAPES,
+  POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, DOUBLE_SHOT_DURATION, NOTIF_LIFETIME,
+  BG_THEMES, SHIP_THEMES, DIFFICULTY_NAMES,
   type GameState, type Star, type BgTheme, type ShipTheme, type SoundEvent,
-  makeState, tickGame, shipY, shipScale, rockScale, getBgTheme, getShipTheme,
+  makeState, tickGame, shipY, shipScale, rockScale, getBgTheme, getShipTheme, spawnBullets,
 } from '@hit-the-answer/common';
 
 const KEYBOARD_SPEED = 6;
@@ -284,7 +284,7 @@ function drawRock(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
 
 function draw(
   ctx: CanvasRenderingContext2D, s: GameState, stars: Star[],
-  sw: number, sh: number, bgT: BgTheme, shipT: ShipTheme, _shapeId: string, muted: boolean,
+  sw: number, sh: number, bgT: BgTheme, shipT: ShipTheme, starOffset: number,
 ) {
   const sy = shipY(sh);
   const now = Date.now();
@@ -293,14 +293,15 @@ function draw(
   ctx.fillRect(0, 0, sw, sh);
 
   for (const st of stars) {
+    const y = (st.y + starOffset) % sh;
     ctx.globalAlpha = st.o;
     if (bgT.light) {
       ctx.font = `${8 + st.r * 6}px sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('🍓', st.x, st.y);
+      ctx.fillText('🍓', st.x, y);
     } else {
       ctx.fillStyle = bgT.star;
-      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(st.x, y, st.r, 0, Math.PI * 2); ctx.fill();
     }
   }
   ctx.globalAlpha = 1;
@@ -321,7 +322,38 @@ function draw(
     const r = (NUM_SIZE / 2) * rs;
     const damaged = n.hp < n.maxHp;
 
-    if (n.bomb) {
+    if (n.doubleShot) {
+      // Double shot rock — dark box with two parallel bullet shapes
+      ctx.save();
+      ctx.shadowColor = '#FFD866'; ctx.shadowBlur = 14;
+      ctx.fillStyle = '#1a1a0a';
+      ctx.beginPath(); ctx.roundRect(cx - r, cy - r, r * 2, r * 2, 6); ctx.fill();
+      ctx.strokeStyle = '#FFD866'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.shadowBlur = 0;
+      const bw = Math.max(4, r * 0.22), bh = r * 0.85, gap = r * 0.35;
+      ctx.fillStyle = '#FFD866'; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.roundRect(cx - gap - bw, cy - bh / 2, bw, bh, bw / 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + gap,       cy - bh / 2, bw, bh, bw / 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    } else if (n.gift) {
+      // Gift rock — glowing present box
+      ctx.save();
+      ctx.shadowColor = '#4ADE80'; ctx.shadowBlur = 14;
+      ctx.fillStyle = '#0e2a1a';
+      ctx.beginPath(); ctx.roundRect(cx - r, cy - r, r * 2, r * 2, 6); ctx.fill();
+      ctx.strokeStyle = '#4ADE80'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Ribbon horizontal
+      ctx.fillStyle = 'rgba(74,222,128,0.65)';
+      ctx.fillRect(cx - r, cy - 2, r * 2, 4);
+      // Ribbon vertical
+      ctx.fillRect(cx - 2, cy - r, 4, r * 2);
+      ctx.restore();
+      ctx.font = `${Math.round(r * 1.1)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🎁', cx, cy);
+    } else if (n.bomb) {
       // Draw bomb rock — dark jagged boulder with fuse
       const pts = rockPts(cx, cy, r, n.id);
       ctx.save();
@@ -428,8 +460,8 @@ function draw(
   }
 
   for (const b of s.bullets) {
-    ctx.shadowColor = 'rgba(255,216,102,0.5)'; ctx.shadowBlur = 10;
-    ctx.fillStyle = '#FFD866';
+    ctx.shadowColor = b.twin ? 'rgba(255,241,118,0.6)' : 'rgba(255,216,102,0.5)'; ctx.shadowBlur = 10;
+    ctx.fillStyle = b.twin ? '#FFF176' : '#FFD866';
     ctx.beginPath(); ctx.roundRect(b.x, b.y, BULLET_W, BULLET_H, BULLET_W / 2); ctx.fill();
     ctx.shadowBlur = 0;
   }
@@ -469,12 +501,6 @@ function draw(
   ctx.beginPath(); ctx.roundRect(16, 52, 32, 32, 8); ctx.fill();
   ctx.fillStyle = pauseBarCol; ctx.fillRect(24, 60, 4, 16); ctx.fillRect(32, 60, 4, 16);
 
-  // HUD — mute button (top-left, below pause)
-  ctx.fillStyle = pauseBtnFill;
-  ctx.beginPath(); ctx.roundRect(16, 90, 32, 32, 8); ctx.fill();
-  ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(muted ? '🔇' : '🔊', 32, 106);
-
   // HUD — lives
   ctx.textBaseline = 'middle'; ctx.font = '22px sans-serif'; ctx.fillStyle = '#FF4757'; ctx.textAlign = 'left';
   const maxDisplay = Math.max(MAX_LIVES, s.lives);
@@ -513,6 +539,7 @@ function draw(
   drawEffect(s.shieldTimer, POWERUP_DURATION, '#FFD866', '🛡 Shield');
   drawEffect(s.slowTimer, POWERUP_DURATION, '#00BFFF', '❄ Slow');
   drawEffect(s.fastTimer, BAD_EFFECT_DURATION, '#C850C0', '⚡ Fast');
+  drawEffect(s.doubleShotTimer, DOUBLE_SHOT_DURATION, '#FFD866', '🔫 x2');
 
   // Hint
   ctx.textAlign = 'center'; ctx.fillStyle = hintCol; ctx.font = '13px sans-serif';
@@ -521,20 +548,21 @@ function draw(
 
 function drawTitleScreen(
   ctx: CanvasRenderingContext2D, stars: Star[], sw: number, sh: number,
-  bgT: BgTheme, shipT: ShipTheme,
+  bgT: BgTheme, shipT: ShipTheme, starOffset: number,
 ) {
   ctx.fillStyle = bgT.bg;
   ctx.fillRect(0, 0, sw, sh);
 
   for (const st of stars) {
+    const y = (st.y + starOffset) % sh;
     ctx.globalAlpha = st.o;
     if (bgT.light) {
       ctx.font = `${8 + st.r * 6}px sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('🍓', st.x, st.y);
+      ctx.fillText('🍓', st.x, y);
     } else {
       ctx.fillStyle = bgT.star;
-      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(st.x, y, st.r, 0, Math.PI * 2); ctx.fill();
     }
   }
   ctx.globalAlpha = 1;
@@ -576,37 +604,33 @@ const checkStyle: React.CSSProperties = {
   lineHeight: 1,
 };
 
-function shapePreviewPath(id: string, cx: number, cy: number, r: number): string {
-  if (id === 'stone') {
-    const pts = [
-      [cx - r * 0.4, cy - r * 0.95], [cx + r * 0.5, cy - r * 0.85],
-      [cx + r * 0.95, cy - r * 0.25], [cx + r * 0.8, cy + r * 0.55],
-      [cx + r * 0.3, cy + r * 0.92], [cx - r * 0.4, cy + r * 0.88],
-      [cx - r * 0.9, cy + r * 0.35], [cx - r * 0.85, cy - r * 0.4],
-    ];
-    return 'M' + pts.map(p => `${p[0]},${p[1]}`).join('L') + 'Z';
-  }
-  if (id === 'hex') {
-    const pts = Array.from({ length: 6 }, (_, i) => {
-      const a = Math.PI / 3 * i - Math.PI / 6;
-      return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`;
-    });
-    return 'M' + pts.join('L') + 'Z';
-  }
-  if (id === 'diamond') {
-    return `M${cx},${cy - r}L${cx + r * 0.75},${cy}L${cx},${cy + r}L${cx - r * 0.75},${cy}Z`;
-  }
-  // circle fallback - use a large arc
-  return `M${cx - r},${cy}A${r},${r},0,1,0,${cx + r},${cy}A${r},${r},0,1,0,${cx - r},${cy}Z`;
+
+function DifficultySlider({ value, onChange, lt }: { value: number; onChange: (v: number) => void; lt?: boolean }) {
+  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginTop: 8 }}>
+      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>DIFFICULTY</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ color: labelColor, fontSize: 12 }}>1</span>
+        <input type="range" min="1" max="5" step="1" value={value}
+          onChange={e => onChange(Number(e.target.value))}
+          style={{ width: 130, accentColor: '#4A6CF7', cursor: 'pointer' }} />
+        <span style={{ color: labelColor, fontSize: 12 }}>5</span>
+      </div>
+      <div style={{ color: lt ? 'rgba(0,0,0,0.6)' : '#4ADE80', fontSize: 13, fontWeight: 700 }}>{DIFFICULTY_NAMES[value - 1]}</div>
+    </div>
+  );
 }
 
-function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
-  bgId: string; shipId: string; shapeId: string;
-  onBg: (id: string) => void; onShip: (id: string) => void; onShape: (id: string) => void;
+function ThemePicker({ bgId, shipId, onBg, onShip, lt }: {
+  bgId: string; shipId: string;
+  onBg: (id: string) => void; onShip: (id: string) => void;
+  lt?: boolean;
 }) {
+  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', marginTop: 16 }}>
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>BACKGROUND</div>
+      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>BACKGROUND</div>
       <div style={{ display: 'flex', gap: 10 }}>
         {BG_THEMES.map(t => (
           <div key={t.id} onClick={() => onBg(t.id)}
@@ -618,7 +642,7 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
           </div>
         ))}
       </div>
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, letterSpacing: 2, marginTop: 4 }}>SHIP</div>
+      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2, marginTop: 4 }}>SHIP</div>
       <div style={{ display: 'flex', gap: 10 }}>
         {SHIP_THEMES.map(t => (
           <div key={t.id} onClick={() => onShip(t.id)}
@@ -634,19 +658,6 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
           </div>
         ))}
       </div>
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, letterSpacing: 2, marginTop: 4 }}>SHAPE</div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        {NUM_SHAPES.map(ns => (
-          <div key={ns.id} onClick={() => onShape(ns.id)}
-            style={{ ...swatchStyle, backgroundColor: 'rgba(255,255,255,0.05)', borderColor: shapeId === ns.id ? '#fff' : undefined }}>
-            <svg width="30" height="30" viewBox="0 0 30 30">
-              <path d={shapePreviewPath(ns.id, 15, 15, 12)} fill="rgba(26,32,64,0.9)" stroke="#4A6CF7" strokeWidth="1.5" />
-              <text x="15" y="16" textAnchor="middle" dominantBaseline="central" fill="#E8EAFF" fontSize="10" fontWeight="bold">7</text>
-            </svg>
-            {shapeId === ns.id && <div style={checkStyle}>✓</div>}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -655,15 +666,16 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const g = useRef<GameState>(makeState(0, window.innerWidth));
+  const g = useRef<GameState>(makeState(0, window.innerWidth, Number(localStorage.getItem('hta_diff') ?? '3') || 3));
   const stars = useRef<Star[]>(
-    Array.from({ length: 50 }, () => ({
+    Array.from({ length: 60 }, () => ({
       x: Math.random() * window.innerWidth,
       y: Math.random() * window.innerHeight,
       r: Math.random() * 1.5 + 0.5,
       o: Math.random() * 0.5 + 0.1,
     })),
   );
+  const starOffset = useRef(0);
   const keys = useRef({ left: false, right: false, space: false, spacePrev: false });
   const [gameKey, setGameKey] = useState(0);
   const [over, setOver] = useState(false);
@@ -671,18 +683,20 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [bgThemeId, setBgThemeId] = useState(() => localStorage.getItem('hta_bg') ?? 'space');
   const [shipThemeId, setShipThemeId] = useState(() => localStorage.getItem('hta_ship') ?? 'classic');
-  const [numShapeId, setNumShapeId] = useState(() => localStorage.getItem('hta_shape') ?? 'circle');
   const [muted, setMuted] = useState(() => localStorage.getItem('hta_mute') === '1');
+  const [difficulty, setDifficulty] = useState(() => Number(localStorage.getItem('hta_diff') ?? '3') || 3);
   const mutedRef = useRef(muted);
+  const difficultyRef = useRef(difficulty);
 
-  // Keep mutedRef in sync so animation loop always sees latest value
+  // Keep refs in sync so animation loop always sees latest value
   mutedRef.current = muted;
+  difficultyRef.current = difficulty;
 
   // Persist settings
   useEffect(() => { localStorage.setItem('hta_bg', bgThemeId); }, [bgThemeId]);
   useEffect(() => { localStorage.setItem('hta_ship', shipThemeId); }, [shipThemeId]);
-  useEffect(() => { localStorage.setItem('hta_shape', numShapeId); }, [numShapeId]);
   useEffect(() => { localStorage.setItem('hta_mute', muted ? '1' : '0'); }, [muted]);
+  useEffect(() => { localStorage.setItem('hta_diff', String(difficulty)); }, [difficulty]);
   const scoreRef = useRef(0);
 
   const bgT = getBgTheme(bgThemeId);
@@ -691,10 +705,9 @@ export default function App() {
   // Keep refs for use inside animation loop
   const bgTRef = useRef(bgT); bgTRef.current = bgT;
   const shipTRef = useRef(shipT); shipTRef.current = shipT;
-  const shapeRef = useRef(numShapeId); shapeRef.current = numShapeId;
 
   if (g.current._key !== gameKey) {
-    g.current = makeState(gameKey, window.innerWidth);
+    g.current = makeState(gameKey, window.innerWidth, difficultyRef.current);
     setOver(false);
     setPaused(false);
   }
@@ -708,7 +721,8 @@ export default function App() {
     const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     window.addEventListener('resize', onResize);
     const loop = () => {
-      drawTitleScreen(ctx, stars.current, canvas.width, canvas.height, bgTRef.current, shipTRef.current);
+      starOffset.current = (starOffset.current + 0.4) % canvas.height;
+      drawTitleScreen(ctx, stars.current, canvas.width, canvas.height, bgTRef.current, shipTRef.current, starOffset.current);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -727,11 +741,6 @@ export default function App() {
     };
     const onClick = (e: MouseEvent) => {
       const s = g.current;
-      // Mute button hit area (below pause button)
-      if (e.clientX >= 16 && e.clientX <= 48 && e.clientY >= 90 && e.clientY <= 122) {
-        setMuted(m => !m);
-        return;
-      }
       // Pause button hit area
       if (!s.over && !s.paused && e.clientX >= 16 && e.clientX <= 48 && e.clientY >= 52 && e.clientY <= 84) {
         s.paused = true; setPaused(true);
@@ -739,11 +748,7 @@ export default function App() {
       }
       if (s.over || s.paused) return;
       playFire(mutedRef.current);
-      s.bullets.push({
-        id: `b${Date.now()}-${Math.random()}`,
-        x: s.shipX + SHIP_W / 2 - BULLET_W / 2,
-        y: shipY(canvas.height) - BULLET_H,
-      });
+      spawnBullets(s, s.shipX, canvas.height);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -781,21 +786,18 @@ export default function App() {
         if (keys.current.right) s.shipX = Math.min(sw - SHIP_W, s.shipX + KEYBOARD_SPEED);
         if (keys.current.space && !keys.current.spacePrev) {
           playFire(mutedRef.current);
-          s.bullets.push({
-            id: `b${Date.now()}-${Math.random()}`,
-            x: s.shipX + SHIP_W / 2 - BULLET_W / 2,
-            y: shipY(sh) - BULLET_H,
-          });
+          spawnBullets(s, s.shipX, sh);
         }
         keys.current.spacePrev = keys.current.space;
         tickGame(s, sw, sh);
         // Drain and play sound events
         for (const ev of s.soundEvents) playSound(ev, mutedRef.current);
         s.soundEvents = [];
-        if (s.over) { scoreRef.current = s.score; draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current, mutedRef.current); setOver(true); return; }
+        starOffset.current = (starOffset.current + 0.8) % sh;
+        if (s.over) { scoreRef.current = s.score; draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, starOffset.current); setOver(true); return; }
       }
 
-      draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, shapeRef.current, mutedRef.current);
+      draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, starOffset.current);
 
       // Dim overlay when paused (canvas part)
       if (s.paused) {
@@ -840,7 +842,12 @@ export default function App() {
             style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, whiteSpace: 'nowrap', width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
             START GAME
           </button>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} shapeId={numShapeId} onBg={setBgThemeId} onShip={setShipThemeId} onShape={setNumShapeId} />
+          <button onClick={() => setMuted(m => !m)}
+            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
+            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
+          </button>
+          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} />
+          <DifficultySlider value={difficulty} onChange={setDifficulty} />
         </div>
       )}
 
@@ -852,20 +859,30 @@ export default function App() {
           <h1 style={{ fontSize: 48, fontWeight: 900, color: bgT.light ? '#1E293B' : '#fff', margin: '8px 0 16px', letterSpacing: 4 }}>PAUSED</h1>
           <button onClick={() => { g.current.paused = false; setPaused(false); }} style={btnStyle}>▶  RESUME</button>
           <button onClick={() => setGameKey(k => k + 1)} style={btnStyle}>↻  RESTART</button>
+          <button onClick={() => setMuted(m => !m)}
+            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
+            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
+          </button>
           <div style={{ color: bgT.light ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 14, marginTop: 4 }}>or press ESC to resume</div>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} shapeId={numShapeId} onBg={setBgThemeId} onShip={setShipThemeId} onShape={setNumShapeId} />
+          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={bgT.light} />
         </div>
       )}
 
       {/* Game over */}
       {started && over && (
-        <div style={{ ...overlayBase, backgroundColor: bgT.light ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)' }}>
+        <div style={{ ...overlayBase, backgroundColor: bgT.light ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)', overflowY: 'auto', paddingBottom: 32 }}>
           <h1 style={{ fontSize: 46, fontWeight: 900, color: '#FF4757', letterSpacing: 6, margin: 0 }}>GAME OVER</h1>
-          <p style={{ fontSize: 28, color: bgT.light ? '#1E293B' : '#fff', fontWeight: 600, margin: 0 }}>Score: {scoreRef.current}</p>
+          <p style={{ fontSize: 28, color: bgT.light ? '#1E293B' : '#fff', fontWeight: 600, margin: '0 0 8px' }}>Score: {scoreRef.current}</p>
           <button onClick={() => setGameKey(k => k + 1)}
-            style={{ ...btnStyle, marginTop: 24 }}>
+            style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, whiteSpace: 'nowrap', width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
             PLAY AGAIN
           </button>
+          <button onClick={() => setMuted(m => !m)}
+            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
+            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
+          </button>
+          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={bgT.light} />
+          <DifficultySlider value={difficulty} onChange={setDifficulty} lt={bgT.light} />
         </div>
       )}
     </>

@@ -6,93 +6,120 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
-  POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, NOTIF_LIFETIME, rockScale,
+  POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, DOUBLE_SHOT_DURATION, NOTIF_LIFETIME, rockScale,
   DRAG_THRESHOLD, TAP_MAX_DURATION,
-  BG_THEMES, SHIP_THEMES, NUM_SHAPES,
-  type GameState, type Star, type BgTheme, type ShipTheme,
-  makeState, tickGame, shipY, shipScale, getBgTheme, getShipTheme, getNumShape,
+  BG_THEMES, SHIP_THEMES, DIFFICULTY_NAMES,
+  type GameState, type Star,
+  makeState, tickGame, shipY, shipScale, getBgTheme, getShipTheme, spawnBullets,
 } from '@hit-the-answer/common';
 
 const { width: sw, height: sh } = Dimensions.get('window');
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44;
 const HUD_TOP = STATUS_BAR_HEIGHT + 8;
 
-// ─── Theme Picker ────────────────────────────────────────────────────────────
+// ─── Sound engine ─────────────────────────────────────────────────────────────
 
-function ShapePreview({ id }: { id: string }) {
-  const s = 28;
-  if (id === 'stone') return (
-    <View style={{ width: s, height: s, backgroundColor: 'rgba(26,32,64,0.9)', borderWidth: 1.5, borderColor: '#4A6CF7',
-      borderTopLeftRadius: 4, borderTopRightRadius: 10, borderBottomLeftRadius: 12, borderBottomRightRadius: 6,
-      alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: '#E8EAFF', fontSize: 10, fontWeight: '700' }}>7</Text>
-    </View>
-  );
-  if (id === 'hex') return (
-    <View style={{ width: s, height: s, backgroundColor: 'rgba(26,32,64,0.9)', borderWidth: 1.5, borderColor: '#4A6CF7',
-      borderRadius: 6, transform: [{ rotate: '30deg' }],
-      alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: '#E8EAFF', fontSize: 10, fontWeight: '700', transform: [{ rotate: '-30deg' }] }}>7</Text>
-    </View>
-  );
-  if (id === 'diamond') return (
-    <View style={{ width: s * 0.75, height: s * 0.75, backgroundColor: 'rgba(26,32,64,0.9)', borderWidth: 1.5, borderColor: '#4A6CF7',
-      borderRadius: 3, transform: [{ rotate: '45deg' }],
-      alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: '#E8EAFF', fontSize: 10, fontWeight: '700', transform: [{ rotate: '-45deg' }] }}>7</Text>
-    </View>
-  );
-  // circle
-  return (
-    <View style={{ width: s, height: s, backgroundColor: 'rgba(26,32,64,0.9)', borderWidth: 1.5, borderColor: '#4A6CF7',
-      borderRadius: s / 2, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: '#E8EAFF', fontSize: 10, fontWeight: '700' }}>7</Text>
-    </View>
-  );
+function makeWavB64(freqStart: number, freqEnd: number, ms: number, vol = 0.22): string {
+  const rate = 22050;
+  const n = Math.round(rate * ms / 1000);
+  const fade = Math.round(rate * 0.025);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true);
+  w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const f = freqStart + (freqEnd - freqStart) * (i / n);
+    const env = Math.min(1, i / fade) * Math.min(1, (n - i) / fade);
+    v.setInt16(44 + i * 2, Math.round(Math.sin(2 * Math.PI * f * t) * env * vol * 32767), true);
+  }
+  const u = new Uint8Array(buf);
+  const C = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let r = '';
+  for (let i = 0; i < u.length; i += 3) {
+    const a = u[i], b = u[i + 1] ?? 0, c = u[i + 2] ?? 0;
+    r += C[a >> 2] + C[((a & 3) << 4) | (b >> 4)] + C[((b & 15) << 2) | (c >> 6)] + C[c & 63];
+  }
+  const p = u.length % 3;
+  if (p === 1) r = r.slice(0, -2) + '==';
+  if (p === 2) r = r.slice(0, -1) + '=';
+  return r;
 }
 
-function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
-  bgId: string; shipId: string; shapeId: string;
-  onBg: (id: string) => void; onShip: (id: string) => void; onShape: (id: string) => void;
+// Pre-generate base64 WAV data at module load time (pure JS, no I/O)
+const SOUND_B64: Record<string, string> = {
+  goodHit: makeWavB64(660, 1320, 180, 0.18),
+  badHit:  makeWavB64(180, 45,   220, 0.22),
+  bombHit: makeWavB64(120, 30,   300, 0.25),
+};
+
+const _sounds: Partial<Record<string, Audio.Sound>> = {};
+
+async function initSounds() {
+  await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+  for (const [key, b64] of Object.entries(SOUND_B64)) {
+    try {
+      // Android/iOS don't support data: URIs — write to a real cache file first
+      const path = FileSystem.cacheDirectory + `hta_${key}.wav`;
+      await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
+      const { sound } = await Audio.Sound.createAsync({ uri: path });
+      _sounds[key] = sound;
+    } catch (_) { /* ignore */ }
+  }
+}
+
+function playMobileSound(ev: string, muted: boolean) {
+  if (muted) return;
+  const snd = _sounds[ev];
+  if (!snd) return;
+  snd.replayAsync().catch(() => {});
+}
+
+// ─── Theme Picker ────────────────────────────────────────────────────────────
+
+function ThemePicker({ bgId, shipId, onBg, onShip, lt }: {
+  bgId: string; shipId: string;
+  onBg: (id: string) => void; onShip: (id: string) => void;
+  lt: boolean;
 }) {
+  const border = lt ? 'rgba(0,0,0,0.22)' : 'rgba(255,255,255,0.22)';
+  const selBorder = lt ? '#1E293B' : '#fff';
+  const shipSwatchBg = lt ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
   return (
     <View style={tp.root}>
-      <Text style={tp.label}>BACKGROUND</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={tp.row}>
+      <Text style={[tp.label, lt && { color: 'rgba(0,0,0,0.4)' }]}>BACKGROUND</Text>
+      <View style={tp.wrapRow}>
         {BG_THEMES.map(t => (
           <TouchableOpacity key={t.id} activeOpacity={0.7} onPress={() => onBg(t.id)}
-            style={[tp.swatch, { backgroundColor: t.bg }, bgId === t.id && tp.swatchSel]}>
-            <View style={[tp.dot, { backgroundColor: t.star, top: 8, left: 10 }]} />
-            <View style={[tp.dot, { backgroundColor: t.star, top: 20, right: 8, opacity: 0.5, width: 4, height: 4 }]} />
-            <View style={[tp.dot, { backgroundColor: t.star, bottom: 10, left: 16, opacity: 0.6, width: 4, height: 4 }]} />
+            style={[tp.swatch, { backgroundColor: t.bg, borderColor: bgId === t.id ? selBorder : border }]}>
+            <View style={[tp.dot, { backgroundColor: t.star, top: 6, left: 8 }]} />
+            <View style={[tp.dot, { backgroundColor: t.star, top: 16, right: 6, opacity: 0.5, width: 3, height: 3 }]} />
+            <View style={[tp.dot, { backgroundColor: t.star, bottom: 8, left: 12, opacity: 0.6, width: 3, height: 3 }]} />
             {bgId === t.id && <View style={tp.check}><Text style={tp.checkText}>✓</Text></View>}
           </TouchableOpacity>
         ))}
-      </ScrollView>
-      <Text style={[tp.label, { marginTop: 8 }]}>SHIP</Text>
-      <View style={tp.row}>
+      </View>
+      <Text style={[tp.label, { marginTop: 8 }, lt && { color: 'rgba(0,0,0,0.4)' }]}>SHIP</Text>
+      <View style={tp.wrapRow}>
         {SHIP_THEMES.map(t => (
           <TouchableOpacity key={t.id} activeOpacity={0.7} onPress={() => onShip(t.id)}
-            style={[tp.swatch, { backgroundColor: 'rgba(255,255,255,0.05)' }, shipId === t.id && tp.swatchSel]}>
+            style={[tp.swatch, { backgroundColor: shipSwatchBg, borderColor: shipId === t.id ? selBorder : border }]}>
             <View style={{ alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-              <View style={{ width: 0, height: 0, borderLeftWidth: 7, borderRightWidth: 7, borderBottomWidth: 10,
+              <View style={{ width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 9,
                 borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: t.nose }} />
-              <View style={{ width: 14, height: 8, backgroundColor: t.body, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 }} />
-              <View style={{ width: 6, height: 6, backgroundColor: t.flame, borderRadius: 3, marginTop: -1, opacity: 0.85 }} />
+              <View style={{ width: 12, height: 7, backgroundColor: t.body, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 }} />
+              <View style={{ width: 5, height: 5, backgroundColor: t.flame, borderRadius: 3, marginTop: -1, opacity: 0.85 }} />
             </View>
             {shipId === t.id && <View style={tp.check}><Text style={tp.checkText}>✓</Text></View>}
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Text style={[tp.label, { marginTop: 8 }]}>SHAPE</Text>
-      <View style={tp.row}>
-        {NUM_SHAPES.map(ns => (
-          <TouchableOpacity key={ns.id} activeOpacity={0.7} onPress={() => onShape(ns.id)}
-            style={[tp.swatch, { backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' }, shapeId === ns.id && tp.swatchSel]}>
-            <ShapePreview id={ns.id} />
-            {shapeId === ns.id && <View style={tp.check}><Text style={tp.checkText}>✓</Text></View>}
           </TouchableOpacity>
         ))}
       </View>
@@ -101,22 +128,53 @@ function ThemePicker({ bgId, shipId, shapeId, onBg, onShip, onShape }: {
 }
 
 const tp = StyleSheet.create({
-  root: { alignItems: 'center', marginTop: 16 },
+  root: { alignItems: 'center', marginTop: 10, width: '100%' },
   label: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '700', letterSpacing: 2, marginBottom: 6 },
-  row: { flexDirection: 'row', gap: 10 },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   swatch: {
-    width: 52, height: 52, borderRadius: 12, borderWidth: 2, borderColor: 'rgba(255,255,255,0.15)',
+    width: 44, height: 44, borderRadius: 10, borderWidth: 2, borderColor: 'rgba(255,255,255,0.15)',
     overflow: 'hidden',
   },
   swatchSel: { borderColor: '#fff' },
   dot: { position: 'absolute', width: 5, height: 5, borderRadius: 3, opacity: 0.8 },
   check: {
     position: 'absolute', top: -4, right: -4,
-    width: 18, height: 18, borderRadius: 9, backgroundColor: '#4ADE80',
+    width: 16, height: 16, borderRadius: 8, backgroundColor: '#4ADE80',
     alignItems: 'center', justifyContent: 'center',
   },
-  checkText: { color: '#000', fontSize: 11, fontWeight: '900', lineHeight: 14 },
+  checkText: { color: '#000', fontSize: 10, fontWeight: '900', lineHeight: 13 },
 });
+
+// ─── Difficulty Picker ───────────────────────────────────────────────────────
+
+function DifficultyPicker({ value, onChange, lt }: { value: number; onChange: (v: number) => void; lt: boolean }) {
+  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  const activeColor = '#4A6CF7';
+  return (
+    <View style={{ alignItems: 'center', marginTop: 10, gap: 6 }}>
+      <Text style={{ color: labelColor, fontSize: 10, fontWeight: '700', letterSpacing: 2 }}>DIFFICULTY</Text>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {[1, 2, 3, 4, 5].map(level => (
+          <TouchableOpacity key={level} onPress={() => onChange(level)} activeOpacity={0.7}
+            style={{
+              width: 44, height: 44, borderRadius: 10,
+              alignItems: 'center', justifyContent: 'center',
+              backgroundColor: value === level ? activeColor : (lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'),
+              borderWidth: 1.5,
+              borderColor: value === level ? activeColor : (lt ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)'),
+            }}>
+            <Text style={{ color: value === level ? '#fff' : (lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)'), fontSize: 15, fontWeight: '700' }}>
+              {level}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={{ color: lt ? 'rgba(0,0,0,0.6)' : '#4ADE80', fontSize: 13, fontWeight: '700' }}>
+        {DIFFICULTY_NAMES[value - 1]}
+      </Text>
+    </View>
+  );
+}
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -126,40 +184,53 @@ export default function App(): React.JSX.Element {
   const [started, setStarted] = useState(false);
   const [bgThemeId, setBgThemeId] = useState('space');
   const [shipThemeId, setShipThemeId] = useState('classic');
-  const [numShapeId, setNumShapeId] = useState('circle');
+  const [muted, setMuted] = useState(false);
+  const [difficulty, setDifficulty] = useState(3);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const mutedRef = useRef(muted);
+  const difficultyRef = useRef(difficulty);
+  mutedRef.current = muted;
+  difficultyRef.current = difficulty;
 
-  // Load settings from AsyncStorage on mount
+  // Load settings and init sounds on mount
   useEffect(() => {
     (async () => {
       const bg = await AsyncStorage.getItem('hta_bg');
       const ship = await AsyncStorage.getItem('hta_ship');
-      const shape = await AsyncStorage.getItem('hta_shape');
+      const m = await AsyncStorage.getItem('hta_muted');
+      const diff = await AsyncStorage.getItem('hta_diff');
       if (bg) setBgThemeId(bg);
       if (ship) setShipThemeId(ship);
-      if (shape) setNumShapeId(shape);
+      if (m) setMuted(m === '1');
+      if (diff) setDifficulty(Number(diff) || 3);
       setSettingsLoaded(true);
     })();
+    initSounds();
+    return () => { Object.values(_sounds).forEach(snd => snd?.unloadAsync()); };
   }, []);
 
   // Persist settings when they change
   useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_bg', bgThemeId); }, [bgThemeId, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_ship', shipThemeId); }, [shipThemeId, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_shape', numShapeId); }, [numShapeId, settingsLoaded]);
-  const g = useRef<GameState>(makeState(0, sw));
+  useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_muted', muted ? '1' : '0'); }, [muted, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_diff', String(difficulty)); }, [difficulty, settingsLoaded]);
+  const g = useRef<GameState>(makeState(0, sw, 3));
 
   const bgT = getBgTheme(bgThemeId);
   const shipT = getShipTheme(shipThemeId);
 
   const stars = useRef<Star[]>(
-    Array.from({ length: 50 }, () => ({
+    Array.from({ length: 60 }, () => ({
       x: Math.random() * sw, y: Math.random() * sh,
       r: Math.random() * 1.5 + 0.5, o: Math.random() * 0.5 + 0.1,
     })),
   ).current;
 
+  // Scrolling parallax — stars drift downward to simulate the ship moving up
+  const starOffset = useRef(0);
+
   if (g.current._key !== gameKey) {
-    g.current = makeState(gameKey, sw);
+    g.current = makeState(gameKey, sw, difficultyRef.current);
   }
 
   useEffect(() => {
@@ -167,7 +238,12 @@ export default function App(): React.JSX.Element {
     let raf: number;
     const step = () => {
       if (s.over) { rerender(c => c + 1); return; }
-      if (!s.paused) tickGame(s, sw, sh);
+      if (!s.paused) {
+        tickGame(s, sw, sh);
+        for (const ev of s.soundEvents) playMobileSound(ev, mutedRef.current);
+        s.soundEvents = [];
+        starOffset.current = (starOffset.current + 0.8) % sh;
+      }
       rerender(c => c + 1);
       raf = requestAnimationFrame(step);
     };
@@ -189,8 +265,8 @@ export default function App(): React.JSX.Element {
 
   const pan = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => !g.current.paused && !g.current.over,
+      onMoveShouldSetPanResponder: () => !g.current.paused && !g.current.over,
       onPanResponderGrant: () => {
         const s = g.current;
         if (s.over || s.paused) return;
@@ -207,7 +283,7 @@ export default function App(): React.JSX.Element {
         if (s.over || s.paused) return;
         const elapsed = Date.now() - s.touchStartTime;
         if (!s.isDragging && elapsed < TAP_MAX_DURATION && Math.abs(gs.dx) < DRAG_THRESHOLD) {
-          s.bullets.push({ id: `b${Date.now()}-${Math.random()}`, x: s.shipX + SHIP_W / 2 - BULLET_W / 2, y: shipY(sh) - BULLET_H });
+          spawnBullets(s, s.shipX, sh);
         }
         s.isDragging = false;
       },
@@ -225,9 +301,7 @@ export default function App(): React.JSX.Element {
   const lt = bgT.light;
   const textCol = lt ? '#1E293B' : '#fff';
   const hintCol = lt ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.2)';
-  const numFill = lt ? 'rgba(255,255,255,0.85)' : 'rgba(26,32,64,0.9)';
-  const numTextCol = lt ? '#1E293B' : '#E8EAFF';
-  const qTextCol = lt ? '#B45309' : '#FFD866';
+const qTextCol = lt ? '#B45309' : '#FFD866';
   const qBoxBg = lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)';
   const qBoxBorder = lt ? 'rgba(180,140,40,0.3)' : 'rgba(255,216,102,0.2)';
   const titleHitCol = lt ? '#B45309' : '#FFD866';
@@ -236,17 +310,20 @@ export default function App(): React.JSX.Element {
   const pauseBtnBorder = lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)';
   const pauseBtnTextCol = lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.7)';
 
-  const starViews = stars.map((st, i) => lt ? (
-    <Text key={i} style={{
-      position: 'absolute', left: st.x - 4, top: st.y - 4,
-      fontSize: 8 + st.r * 6, opacity: st.o,
-    }}>🍓</Text>
-  ) : (
-    <View key={i} style={[styles.star, {
-      left: st.x, top: st.y, width: st.r * 2, height: st.r * 2,
-      borderRadius: st.r, opacity: st.o, backgroundColor: bgT.star,
-    }]} />
-  ));
+  const starViews = stars.map((st, i) => {
+    const scrollY = started && !s.over ? (st.y + starOffset.current) % sh : st.y;
+    return lt ? (
+      <Text key={i} style={{
+        position: 'absolute', left: st.x - 4, top: scrollY - 4,
+        fontSize: 8 + st.r * 6, opacity: st.o,
+      }}>🍓</Text>
+    ) : (
+      <View key={i} style={[styles.star, {
+        left: st.x, top: scrollY, width: st.r * 2, height: st.r * 2,
+        borderRadius: st.r, opacity: st.o, backgroundColor: bgT.star,
+      }]} />
+    );
+  });
 
   const shipView = (scaleOverride?: number) => (
     <View style={[styles.ship, scaleOverride != null
@@ -296,7 +373,14 @@ export default function App(): React.JSX.Element {
             activeOpacity={0.7} onPress={() => { setStarted(true); setGameKey(k => k + 1); }}>
             <Text style={styles.startBtnText}>START GAME</Text>
           </TouchableOpacity>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} shapeId={numShapeId} onBg={setBgThemeId} onShip={setShipThemeId} onShape={setNumShapeId} />
+          <TouchableOpacity style={[styles.muteBtn, {
+            borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
+            backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)',
+          }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
+            <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
+          </TouchableOpacity>
+          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
+          <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
         </View>
       </View>
     );
@@ -308,13 +392,22 @@ export default function App(): React.JSX.Element {
       <View style={[styles.root, { backgroundColor: bgT.bg }]}>
         <StatusBar style="light" />
         {starViews}
-        <View style={styles.center}>
+        <ScrollView contentContainerStyle={[styles.titleContainer, { paddingVertical: 40 }]} bounces={false}>
           <Text style={styles.overTitle}>GAME OVER</Text>
           <Text style={[styles.overScore, { color: textCol }]}>Score: {s.score}</Text>
-          <TouchableOpacity style={styles.playBtn} activeOpacity={0.7} onPress={() => setGameKey(k => k + 1)}>
-            <Text style={styles.playBtnText}>PLAY AGAIN</Text>
+          <TouchableOpacity style={[styles.startBtn, { backgroundColor: shipT.body, shadowColor: shipT.body, marginTop: 24 }]}
+            activeOpacity={0.7} onPress={() => setGameKey(k => k + 1)}>
+            <Text style={styles.startBtnText}>PLAY AGAIN</Text>
           </TouchableOpacity>
-        </View>
+          <TouchableOpacity style={[styles.muteBtn, {
+            borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
+            backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)',
+          }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
+            <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
+          </TouchableOpacity>
+          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
+          <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
+        </ScrollView>
       </View>
     );
   }
@@ -348,15 +441,58 @@ export default function App(): React.JSX.Element {
         </View>
       </View>
 
-      {(s.shieldTimer > 0 || s.slowTimer > 0 || s.fastTimer > 0) && (
+      {(s.shieldTimer > 0 || s.slowTimer > 0 || s.fastTimer > 0 || s.doubleShotTimer > 0) && (
         <View style={styles.effectsRow}>
           {s.shieldTimer > 0 && <View style={styles.effectPill}><View style={[styles.effectBar, { backgroundColor: '#FFD866', width: `${(s.shieldTimer / POWERUP_DURATION) * 100}%` as any }]} /><Text style={styles.effectLabel}>🛡️ Shield</Text></View>}
           {s.slowTimer > 0 && <View style={styles.effectPill}><View style={[styles.effectBar, { backgroundColor: '#00BFFF', width: `${(s.slowTimer / POWERUP_DURATION) * 100}%` as any }]} /><Text style={styles.effectLabel}>❄️ Slow</Text></View>}
           {s.fastTimer > 0 && <View style={styles.effectPill}><View style={[styles.effectBar, { backgroundColor: '#C850C0', width: `${(s.fastTimer / BAD_EFFECT_DURATION) * 100}%` as any }]} /><Text style={styles.effectLabel}>⚡ Fast</Text></View>}
+          {s.doubleShotTimer > 0 && <View style={styles.effectPill}><View style={[styles.effectBar, { backgroundColor: '#FFD866', width: `${(s.doubleShotTimer / DOUBLE_SHOT_DURATION) * 100}%` as any }]} /><Text style={styles.effectLabel}>🔫 x2</Text></View>}
         </View>
       )}
 
       {s.numbers.map(n => {
+        // Double shot rock
+        if (n.doubleShot) {
+          return (
+            <View key={n.id} style={{
+              position: 'absolute', left: n.x, top: n.y,
+              width: NUM_SIZE, height: NUM_SIZE,
+              backgroundColor: '#1a1a0a',
+              borderWidth: 2, borderColor: '#FFD866',
+              borderRadius: 10,
+              alignItems: 'center', justifyContent: 'center',
+              shadowColor: '#FFD866', shadowRadius: 10, shadowOpacity: 0.6, shadowOffset: { width: 0, height: 0 },
+            }}>
+              {/* Two parallel bullet shapes */}
+              <View style={{ flexDirection: 'row', gap: 5 }}>
+                <View style={{ width: 5, height: 16, borderRadius: 3, backgroundColor: '#FFD866', opacity: 0.9 }} />
+                <View style={{ width: 5, height: 16, borderRadius: 3, backgroundColor: '#FFD866', opacity: 0.9 }} />
+              </View>
+            </View>
+          );
+        }
+        // Gift rock — present box
+        if (n.gift) {
+          return (
+            <View key={n.id} style={{
+              position: 'absolute',
+              left: n.x, top: n.y,
+              width: NUM_SIZE, height: NUM_SIZE,
+              backgroundColor: '#0e2a1a',
+              borderWidth: 2, borderColor: '#4ADE80',
+              borderRadius: 10,
+              alignItems: 'center', justifyContent: 'center',
+              shadowColor: '#4ADE80', shadowRadius: 10, shadowOpacity: 0.6, shadowOffset: { width: 0, height: 0 },
+            }}>
+              {/* Ribbon horizontal */}
+              <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', height: 3, backgroundColor: '#4ADE80', opacity: 0.7 }} />
+              {/* Ribbon vertical */}
+              <View style={{ position: 'absolute', top: 0, bottom: 0, left: '42%', width: 3, backgroundColor: '#4ADE80', opacity: 0.7 }} />
+              <Text style={{ fontSize: 22, zIndex: 1 }}>🎁</Text>
+            </View>
+          );
+        }
+
         const rs = rockScale(n.hp);
         const rSize = NUM_SIZE * rs;
         const damaged = n.hp < n.maxHp;
@@ -428,7 +564,7 @@ export default function App(): React.JSX.Element {
       })}
 
       {s.bullets.map(b => (
-        <View key={b.id} style={[styles.bullet, { left: b.x, top: b.y }]}>
+        <View key={b.id} style={[styles.bullet, { left: b.x, top: b.y, backgroundColor: b.twin ? '#FFF176' : '#FFD866' }]}>
           <View style={styles.bulletGlow} />
         </View>
       ))}
@@ -477,8 +613,6 @@ export default function App(): React.JSX.Element {
         <View style={styles.pauseOverlay} onStartShouldSetResponder={() => true}>
           <ScrollView contentContainerStyle={styles.pauseScroll} bounces={false}>
             <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
-              <Text style={[styles.pauseLogoHit, { color: titleHitCol }]}>HIT THE</Text>
-              <Text style={[styles.pauseLogoAnswer, { color: shipT.body }]}>ANSWER</Text>
               <Text style={[styles.pauseTitle, { color: textCol }]}>PAUSED</Text>
               <TouchableOpacity style={styles.menuBtn} activeOpacity={0.7}
                 onPress={() => { g.current.paused = false; rerender(c => c + 1); }}>
@@ -488,11 +622,18 @@ export default function App(): React.JSX.Element {
                 onPress={() => setGameKey(k => k + 1)}>
                 <Text style={styles.menuBtnText}>↻  RESTART</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[styles.muteBtn, {
+                borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
+                backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+              }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
+                <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.menuBtn, styles.menuBtnExit]} activeOpacity={0.7}
                 onPress={() => BackHandler.exitApp()}>
                 <Text style={[styles.menuBtnText, styles.menuBtnExitText]}>✕  EXIT</Text>
               </TouchableOpacity>
-              <ThemePicker bgId={bgThemeId} shipId={shipThemeId} shapeId={numShapeId} onBg={setBgThemeId} onShip={setShipThemeId} onShape={setNumShapeId} />
+              <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
+              <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
             </View>
           </ScrollView>
         </View>
@@ -554,16 +695,19 @@ const styles = StyleSheet.create({
   flameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: -2 },
   shipFlame: { width: 10, height: 12, borderRadius: 5, opacity: 0.85 },
   pauseOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 100 },
-  pauseScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
+  pauseScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 20 },
   pauseMenu: {
-    backgroundColor: '#0D1128', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(74,108,247,0.3)',
-    paddingVertical: 32, paddingHorizontal: 32, alignItems: 'center', gap: 14, width: '85%', maxWidth: 340,
+    backgroundColor: '#0D1128', borderRadius: 20, borderWidth: 1, borderColor: 'rgba(74,108,247,0.3)',
+    paddingVertical: 20, paddingHorizontal: 24, alignItems: 'center', gap: 10, width: '88%', maxWidth: 340,
   },
   pauseLogoHit: { fontSize: 22, fontWeight: '900', color: '#FFD866', letterSpacing: 3 },
   pauseLogoAnswer: { fontSize: 26, fontWeight: '900', letterSpacing: 4, marginBottom: 8 },
-  pauseTitle: { fontSize: 36, fontWeight: '900', color: '#fff', letterSpacing: 6, marginBottom: 12 },
-  menuBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#4A6CF7', borderRadius: 14, alignItems: 'center' },
-  menuBtnText: { color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: 2 },
+  pauseTitle: { fontSize: 30, fontWeight: '900', color: '#fff', letterSpacing: 6, marginBottom: 4 },
+  menuBtn: { width: '100%', paddingVertical: 13, backgroundColor: '#4A6CF7', borderRadius: 13, alignItems: 'center' },
+  menuBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 2 },
+  menuBtnSound: { borderWidth: 1.5 },
+  muteBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 12, borderWidth: 1.5 },
+  muteBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 1 },
   menuBtnExit: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.4)', marginTop: 4 },
   menuBtnExitText: { color: '#FF4757' },
   titleContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },

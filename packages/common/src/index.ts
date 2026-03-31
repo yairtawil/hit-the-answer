@@ -23,6 +23,7 @@ export const POWERUP_DROP_CHANCE = 0.25;
 export const BAD_DROP_CHANCE = 0.2;
 export const POWERUP_DURATION = 600; // ~10 seconds at 60fps
 export const BAD_EFFECT_DURATION = 300; // ~5 seconds at 60fps
+export const DOUBLE_SHOT_DURATION = 600; // ~10 seconds at 60fps
 
 // Streak / ship-level constants
 export const STREAK_THRESHOLDS = [0, 5, 10, 15, 20];
@@ -30,6 +31,10 @@ export const BULLET_SPEED_BONUS = [0, 2, 4, 6, 8];
 
 // Round transition cooldown — frames to ignore bullet-rock collisions after a new question
 export const ROUND_COOLDOWN_FRAMES = 40;
+
+export const DIFFICULTY_NAMES = ['Beginner', 'Easy', 'Normal', 'Hard', 'Expert'];
+const DIFFICULTY_FALL_MUL  = [0.45, 0.7, 1.0, 1.4, 1.9];
+const DIFFICULTY_FALL_RAMP = [0.01, 0.025, 0.05, 0.075, 0.12];
 
 export function shipY(sh: number): number {
   return sh - 130;
@@ -120,8 +125,9 @@ export function getNumShape(id: string): NumShape {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type Question = { text: string; answer: number };
-export type Bullet = { id: string; x: number; y: number };
-export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number; bomb?: boolean };
+export const DOUBLE_SHOT_OFFSET = 8; // px between the two barrels
+export type Bullet = { id: string; x: number; y: number; twin?: boolean };
+export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number; bomb?: boolean; gift?: boolean; doubleShot?: boolean };
 export type Particle = { id: string; x: number; y: number; vx: number; vy: number; color: string; life: number; maxLife: number; size: number };
 export type Star = { x: number; y: number; r: number; o: number };
 
@@ -161,24 +167,40 @@ export type GameState = {
   soundEvents: SoundEvent[];
   // Frames remaining where bullets pass through rocks (transition buffer)
   roundCooldown: number;
+  // Double shot timer
+  doubleShotTimer: number;
+  // Difficulty level 1–5
+  difficulty: number;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-export function createQuestion(): Question {
-  const ops: { sym: string; fn: (a: number, b: number) => number }[] = [
-    { sym: '×', fn: (a, b) => a * b },
+export function createQuestion(difficulty = 3): Question {
+  type Op = { sym: string; fn: (a: number, b: number) => number };
+  const allOps: Op[] = [
     { sym: '+', fn: (a, b) => a + b },
     { sym: '−', fn: (a, b) => a - b },
+    { sym: '×', fn: (a, b) => a * b },
+    { sym: '÷', fn: (a, b) => a / b },
   ];
+  const di = Math.max(0, Math.min(4, difficulty - 1));
+  const opCount = [1, 2, 3, 3, 4][di];
+  const ops = allOps.slice(0, opCount);
   const op = ops[Math.floor(Math.random() * ops.length)];
-  let a = 2 + Math.floor(Math.random() * 9);
-  let b = 2 + Math.floor(Math.random() * 9);
+  const minN = [1, 1, 2, 3, 4][di];
+  const maxN = [5, 8, 10, 13, 16][di];
+  if (op.sym === '÷') {
+    const b = minN + Math.floor(Math.random() * (maxN - minN));
+    const a = b * (2 + Math.floor(Math.random() * 5));
+    return { text: `${a} ${op.sym} ${b}`, answer: a / b };
+  }
+  let a = minN + Math.floor(Math.random() * (maxN - minN));
+  let b = minN + Math.floor(Math.random() * (maxN - minN));
   if (op.sym === '−' && a < b) [a, b] = [b, a];
   return { text: `${a} ${op.sym} ${b}`, answer: op.fn(a, b) };
 }
 
-export function createNumbers(answer: number, sw: number, score: number): FallingNum[] {
+export function createNumbers(answer: number, sw: number, score: number, difficulty = 3): FallingNum[] {
   const vals = new Set<number>([answer]);
   while (vals.size < ANSWER_COUNT) {
     let d = Math.floor(Math.random() * 10) + 1;
@@ -189,24 +211,30 @@ export function createNumbers(answer: number, sw: number, score: number): Fallin
   const arr = Array.from(vals).sort(() => Math.random() - 0.5);
   const gap = sw / (arr.length + 1);
 
-  // Max HP ramps up with score so early game is easier
-  const maxHp = score < 3 ? 1 : score < 8 ? 2 : ROCK_MAX_HP;
+  // Max HP ramps up with score, scaled by difficulty
+  const di = Math.max(0, Math.min(4, difficulty - 1));
+  const hpThresholds = [[99,99],[5,99],[3,8],[2,5],[1,3]][di];
+  const maxHp = score < hpThresholds[0] ? 1 : score < hpThresholds[1] ? 2 : ROCK_MAX_HP;
 
   const rocks: FallingNum[] = arr.map((value, i) => {
     const hp = 1 + Math.floor(Math.random() * maxHp);
+    // Stagger rocks into 3 depth tiers so horizontally-adjacent rocks never overlap
+    // even at max HP scale (1.5×). Tier spacing (100px) > max rock radius (36px).
+    const tier = i % 3;
     return {
       id: `n${Date.now()}-${i}`,
       value,
       x: gap * (i + 1) - NUM_SIZE / 2,
-      y: -(NUM_SIZE + Math.random() * 200),
+      y: -(NUM_SIZE + 30 + tier * 100 + Math.random() * 60),
       correct: value === answer,
       hp,
       maxHp: hp,
     };
   });
 
-  // Bomb rocks appear from score >= 5
-  const bombCount = score < 5 ? 0 : score < 12 ? 1 : 2;
+  // Bomb rocks appear based on difficulty
+  const bombThresholds = [[99,99],[8,99],[5,12],[3,8],[2,6]][di];
+  const bombCount = score < bombThresholds[0] ? 0 : score < bombThresholds[1] ? 1 : 2;
   for (let b = 0; b < bombCount; b++) {
     let bx = 0;
     let attempts = 0;
@@ -223,6 +251,28 @@ export function createNumbers(answer: number, sw: number, score: number): Fallin
       hp: 1,
       maxHp: 1,
       bomb: true,
+    });
+  }
+
+  // Special rocks appear from score >= 3 — gift (powerup) or doubleShot, alternating
+  if (score >= 3) {
+    const kind = Math.random() < 0.5 ? 'gift' : 'doubleShot';
+    let gx = 0;
+    let attempts = 0;
+    do {
+      gx = NUM_SIZE + Math.random() * (sw - NUM_SIZE * 3);
+      attempts++;
+    } while (attempts < 20 && rocks.some(r => Math.abs(r.x - gx) < NUM_SIZE * 1.6));
+    rocks.push({
+      id: `special${Date.now()}-${Math.random()}`,
+      value: 0,
+      x: gx,
+      y: -(NUM_SIZE + Math.random() * 250),
+      correct: false,
+      hp: 1,
+      maxHp: 1,
+      gift: kind === 'gift',
+      doubleShot: kind === 'doubleShot',
     });
   }
 
@@ -248,6 +298,20 @@ export function spawnExplosion(cx: number, cy: number, correct: boolean): Partic
   });
 }
 
+export function spawnBullets(s: GameState, shipX: number, sh: number): void {
+  const bx = shipX + SHIP_W / 2 - BULLET_W / 2;
+  const by = shipY(sh) - BULLET_H;
+  if (s.doubleShotTimer > 0) {
+    const id = `b${Date.now()}-${Math.random()}`;
+    s.bullets.push(
+      { id: id + 'L', x: bx - DOUBLE_SHOT_OFFSET, y: by, twin: true },
+      { id: id + 'R', x: bx + DOUBLE_SHOT_OFFSET, y: by, twin: true },
+    );
+  } else {
+    s.bullets.push({ id: `b${Date.now()}-${Math.random()}`, x: bx, y: by });
+  }
+}
+
 export function overlaps(
   ax: number, ay: number, aw: number, ah: number,
   bx: number, by: number, bw: number, bh: number,
@@ -255,8 +319,8 @@ export function overlaps(
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-export function makeState(key: number, sw: number): GameState {
-  const q = createQuestion();
+export function makeState(key: number, sw: number, difficulty = 3): GameState {
+  const q = createQuestion(difficulty);
   return {
     _key: key,
     shipX: sw / 2 - SHIP_W / 2,
@@ -264,7 +328,7 @@ export function makeState(key: number, sw: number): GameState {
     isDragging: false,
     touchStartTime: 0,
     bullets: [],
-    numbers: createNumbers(q.answer, sw, 0),
+    numbers: createNumbers(q.answer, sw, 0, difficulty),
     particles: [],
     question: q,
     score: 0,
@@ -280,6 +344,8 @@ export function makeState(key: number, sw: number): GameState {
     notifs: [],
     soundEvents: [],
     roundCooldown: 0,
+    doubleShotTimer: 0,
+    difficulty,
   };
 }
 
@@ -312,8 +378,8 @@ function maybeSpawnPowerUp(s: GameState, nx: number, ny: number, good: boolean):
 
 export function tickGame(s: GameState, sw: number, sh: number): void {
   const speedMul = s.slowTimer > 0 ? 0.4 : s.fastTimer > 0 ? 1.8 : 1;
-  // Gentle ramp: starts at 1.0, adds 0.05 per score point
-  const fallSpeed = (BASE_FALL_SPEED + s.score * 0.05) * speedMul;
+  const _di = Math.max(0, Math.min(4, (s.difficulty ?? 3) - 1));
+  const fallSpeed = (BASE_FALL_SPEED * DIFFICULTY_FALL_MUL[_di] + s.score * DIFFICULTY_FALL_RAMP[_di]) * speedMul;
   const bulletSpeed = BULLET_SPEED + BULLET_SPEED_BONUS[s.shipLevel];
 
   // Tick down transition cooldown
@@ -367,6 +433,27 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
           if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
           addNotif(s, '💣 BOOM!', '#FF4444', cx, cy - 30);
           s.soundEvents.push('bombHit');
+        } else if (n.gift) {
+          // Gift rock hit: drop a good powerup, no life loss, no new round
+          s.numbers.splice(i, 1);
+          s.particles.push(...spawnExplosion(cx, cy, true));
+          addNotif(s, '🎁 GIFT!', '#4ADE80', cx, cy - 30);
+          const goodKinds: PowerUpKind[] = ['life', 'slow', 'shield'];
+          s.powerups.push({
+            id: `pu${Date.now()}-${Math.random()}`,
+            kind: goodKinds[Math.floor(Math.random() * goodKinds.length)],
+            x: n.x + NUM_SIZE / 2 - POWERUP_SIZE / 2,
+            y: n.y + NUM_SIZE / 2 - POWERUP_SIZE / 2,
+            bad: false,
+          });
+          s.soundEvents.push('goodHit');
+        } else if (n.doubleShot) {
+          // Double shot rock hit: activate double shot, no life loss, no new round
+          s.numbers.splice(i, 1);
+          s.particles.push(...spawnExplosion(cx, cy, true));
+          s.doubleShotTimer = DOUBLE_SHOT_DURATION;
+          addNotif(s, '🔫 DOUBLE SHOT!', '#FFD866', cx, cy - 30);
+          s.soundEvents.push('goodHit');
         } else if (n.correct) {
           n.hp--;
           // Chip particles on each hit
@@ -430,11 +517,12 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
   }
   s.bullets = survivingBullets;
 
-  // New round (don't clear powerups)
+  // New round (don't clear powerups, keep gift/doubleShot rocks)
   if (newRound) {
-    const q = createQuestion();
+    const surviving = s.numbers.filter(n => n.gift || n.doubleShot);
+    const q = createQuestion(s.difficulty);
     s.question = q;
-    s.numbers = createNumbers(q.answer, sw, s.score);
+    s.numbers = [...surviving, ...createNumbers(q.answer, sw, s.score, s.difficulty)];
     s.bullets = [];
     s.roundCooldown = ROUND_COOLDOWN_FRAMES;
   }
@@ -483,6 +571,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
   if (s.slowTimer > 0) s.slowTimer--;
   if (s.shieldTimer > 0) s.shieldTimer--;
   if (s.fastTimer > 0) s.fastTimer--;
+  if (s.doubleShotTimer > 0) s.doubleShotTimer--;
 
   if (s.lives <= 0) s.over = true;
 }
