@@ -1,11 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
+  SHIP_W, BULLET_W, BULLET_H, POWER_BULLET_W, NUM_SIZE, MAX_LIVES,
   POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, DOUBLE_SHOT_DURATION, NOTIF_LIFETIME,
-  BG_THEMES, SHIP_THEMES, DIFFICULTY_NAMES,
+  BG_THEMES, SHIP_THEMES, LEVELS,
   type GameState, type Star, type BgTheme, type ShipTheme, type SoundEvent,
-  makeState, tickGame, shipY, shipScale, rockScale, getBgTheme, getShipTheme, spawnBullets,
+  makeState, tickGame, shipY, shipScale, rockScale, getBgTheme, getShipTheme, spawnBullets, computeStars,
 } from '@hit-the-answer/common';
+
+type LevelProgress = Record<number, { stars: 1 | 2 | 3 }>;
+type Screen = 'title' | 'levels' | 'game' | 'settings';
 
 const KEYBOARD_SPEED = 6;
 
@@ -158,6 +161,7 @@ function powerUpColors(kind: string): { color: string; bg: string } {
     case 'shield': return { color: '#FFD866', bg: 'rgba(255,216,102,0.25)' };
     case 'fast': return { color: '#C850C0', bg: 'rgba(200,80,192,0.25)' };
     case 'lose_life': return { color: '#FF2D2D', bg: 'rgba(255,45,45,0.25)' };
+    case 'double_shot': return { color: '#FFD866', bg: 'rgba(255,216,102,0.2)' };
     default: return { color: '#fff', bg: 'rgba(255,255,255,0.25)' };
   }
 }
@@ -165,7 +169,7 @@ function powerUpColors(kind: string): { color: string; bg: string } {
 function powerUpIcon(kind: string): string {
   switch (kind) {
     case 'life': return '♥'; case 'slow': return '❄'; case 'shield': return '🛡';
-    case 'fast': return '⚡'; case 'lose_life': return '💀'; default: return '?';
+    case 'fast': return '⚡'; case 'lose_life': return '💀'; case 'double_shot': return '💥'; default: return '?';
   }
 }
 
@@ -307,7 +311,6 @@ function draw(
   ctx.globalAlpha = 1;
 
   const lt = bgT.light;
-  const textCol = lt ? '#1E293B' : '#fff';
   const hintCol = lt ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.2)';
   const qBoxFill = lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)';
   const qBoxStroke = lt ? 'rgba(180,140,40,0.3)' : 'rgba(255,216,102,0.2)';
@@ -322,21 +325,7 @@ function draw(
     const r = (NUM_SIZE / 2) * rs;
     const damaged = n.hp < n.maxHp;
 
-    if (n.doubleShot) {
-      // Double shot rock — dark box with two parallel bullet shapes
-      ctx.save();
-      ctx.shadowColor = '#FFD866'; ctx.shadowBlur = 14;
-      ctx.fillStyle = '#1a1a0a';
-      ctx.beginPath(); ctx.roundRect(cx - r, cy - r, r * 2, r * 2, 6); ctx.fill();
-      ctx.strokeStyle = '#FFD866'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.shadowBlur = 0;
-      const bw = Math.max(4, r * 0.22), bh = r * 0.85, gap = r * 0.35;
-      ctx.fillStyle = '#FFD866'; ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.roundRect(cx - gap - bw, cy - bh / 2, bw, bh, bw / 2); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + gap,       cy - bh / 2, bw, bh, bw / 2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    } else if (n.gift) {
+    if (n.gift) {
       // Gift rock — glowing present box
       ctx.save();
       ctx.shadowColor = '#4ADE80'; ctx.shadowBlur = 14;
@@ -460,9 +449,10 @@ function draw(
   }
 
   for (const b of s.bullets) {
-    ctx.shadowColor = b.twin ? 'rgba(255,241,118,0.6)' : 'rgba(255,216,102,0.5)'; ctx.shadowBlur = 10;
-    ctx.fillStyle = b.twin ? '#FFF176' : '#FFD866';
-    ctx.beginPath(); ctx.roundRect(b.x, b.y, BULLET_W, BULLET_H, BULLET_W / 2); ctx.fill();
+    const bw = b.power ? POWER_BULLET_W : BULLET_W;
+    ctx.shadowColor = b.power ? 'rgba(255,241,118,0.8)' : 'rgba(255,216,102,0.5)'; ctx.shadowBlur = b.power ? 16 : 10;
+    ctx.fillStyle = b.power ? '#FFF176' : '#FFD866';
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, bw, BULLET_H, bw / 2); ctx.fill();
     ctx.shadowBlur = 0;
   }
 
@@ -516,13 +506,40 @@ function draw(
   ctx.fillStyle = qTextCol; ctx.font = 'bold 22px sans-serif';
   ctx.fillText(`${s.question.text} = ?`, sw / 2, 68);
 
-  // HUD — score + streak
-  ctx.textAlign = 'right'; ctx.fillStyle = textCol; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText(String(s.score), sw - 20, 60);
+  // HUD — level progress bar (top-right)
+  {
+    const left = Math.max(0, s.questionsToWin - s.score);
+    const barW = 140, barH = 8, barX = sw - barW - 16, barY = 50;
+    const pct = Math.min(1, s.score / s.questionsToWin);
+
+    // Label row: hits | mistakes | left
+    ctx.textAlign = 'left'; ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = '#4ADE80';
+    ctx.fillText(`✓ ${s.score}`, barX, barY - 6);
+    ctx.fillStyle = '#FF4757';
+    ctx.textAlign = 'center';
+    ctx.fillText(`✕ ${s.mistakes}`, barX + barW / 2, barY - 6);
+    ctx.fillStyle = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.5)';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${left} left`, barX + barW, barY - 6);
+
+    // Bar background
+    ctx.fillStyle = lt ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)';
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 4); ctx.fill();
+
+    // Bar fill
+    if (pct > 0) {
+      ctx.fillStyle = '#4ADE80';
+      ctx.beginPath(); ctx.roundRect(barX, barY, barW * pct, barH, 4); ctx.fill();
+    }
+  }
+
+  // HUD — streak (below progress bar)
   if (s.streak > 0) {
     ctx.fillStyle = s.shipLevel >= 4 ? (lt ? '#B45309' : '#FFD866') : s.shipLevel >= 2 ? (lt ? '#3B5BDB' : '#A3BFFF') : '#4ADE80';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`🔥 x${s.streak}`, sw - 20, 82);
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`🔥 x${s.streak}`, sw - 16, 72);
   }
 
   // HUD — active effects
@@ -586,77 +603,188 @@ function drawTitleScreen(
   ctx.fillText('Shoot the right number!', sw / 2, cy + 100);
 }
 
-// ─── Theme Picker Component ─────────────────────────────────────────────────
-
-const swatchStyle: React.CSSProperties = {
-  width: 48, height: 48, borderRadius: 10, cursor: 'pointer',
-  border: '2px solid rgba(255,255,255,0.15)', position: 'relative',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  transition: 'border-color 0.15s',
-};
-
-const checkStyle: React.CSSProperties = {
-  position: 'absolute', top: -4, right: -4,
-  width: 18, height: 18, borderRadius: 9,
-  backgroundColor: '#4ADE80', color: '#000',
-  fontSize: 12, fontWeight: 900,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  lineHeight: 1,
-};
 
 
-function DifficultySlider({ value, onChange, lt }: { value: number; onChange: (v: number) => void; lt?: boolean }) {
-  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+
+
+// ─── Settings Screen ─────────────────────────────────────────────────────────
+
+function SettingsScreen({ bgId, shipId, muted, onBg, onShip, onMute, onBack, bgT }: {
+  bgId: string; shipId: string; muted: boolean;
+  onBg: (id: string) => void; onShip: (id: string) => void;
+  onMute: () => void; onBack: () => void;
+  bgT: BgTheme;
+}) {
+  const lt = bgT.light;
+  const textCol = lt ? '#1E293B' : '#fff';
+  const subCol = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  const sectionLabel: React.CSSProperties = { color: subCol, fontSize: 11, fontWeight: 700, letterSpacing: 2, marginBottom: 10, textAlign: 'center' as const };
+  const divider: React.CSSProperties = { width: '100%', maxWidth: 400, height: 1, backgroundColor: lt ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)', margin: '4px 0' };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginTop: 8 }}>
-      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>DIFFICULTY</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ color: labelColor, fontSize: 12 }}>1</span>
-        <input type="range" min="1" max="5" step="1" value={value}
-          onChange={e => onChange(Number(e.target.value))}
-          style={{ width: 130, accentColor: '#4A6CF7', cursor: 'pointer' }} />
-        <span style={{ color: labelColor, fontSize: 12 }}>5</span>
+    <div style={{
+      position: 'fixed', inset: 0,
+      backgroundColor: lt ? 'rgba(255,255,255,0.95)' : 'rgba(5,7,20,0.97)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      overflowY: 'auto', padding: '28px 20px 48px',
+    }}>
+      <div style={{ color: lt ? '#B45309' : '#FFD866', fontSize: 13, fontWeight: 800, letterSpacing: 3, marginBottom: 4 }}>HIT THE ANSWER</div>
+      <h2 style={{ color: textCol, fontSize: 28, fontWeight: 900, margin: '0 0 28px', letterSpacing: 3 }}>SETTINGS</h2>
+
+      <div style={{ width: '100%', maxWidth: 400 }}>
+        {/* Sound */}
+        <div style={sectionLabel}>SOUND</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
+          <button onClick={onMute} style={{
+            padding: '12px 32px', borderRadius: 12, cursor: 'pointer', fontSize: 15, fontWeight: 700, letterSpacing: 1,
+            border: `1.5px solid ${lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`,
+            backgroundColor: lt ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)',
+            color: muted ? subCol : (lt ? 'rgba(0,0,0,0.75)' : '#fff'),
+          }}>
+            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
+          </button>
+        </div>
+
+        <div style={divider} />
+
+        {/* Background */}
+        <div style={{ ...sectionLabel, marginTop: 20 }}>BACKGROUND</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginBottom: 24 }}>
+          {BG_THEMES.map(t => (
+            <div key={t.id} onClick={() => onBg(t.id)} style={{
+              width: 56, height: 56, borderRadius: 12, cursor: 'pointer',
+              backgroundColor: t.bg, position: 'relative', overflow: 'hidden',
+              border: bgId === t.id ? `2.5px solid ${lt ? '#1E293B' : '#fff'}` : `2px solid ${lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)'}`,
+              boxShadow: bgId === t.id ? `0 0 12px ${t.star}44` : 'none',
+              transition: 'border-color 0.15s',
+            }}>
+              <div style={{ position: 'absolute', width: 5, height: 5, borderRadius: 3, backgroundColor: t.star, top: 10, left: 12, opacity: 0.8 }} />
+              <div style={{ position: 'absolute', width: 3, height: 3, borderRadius: 2, backgroundColor: t.star, top: 24, right: 10, opacity: 0.5 }} />
+              <div style={{ position: 'absolute', width: 3, height: 3, borderRadius: 2, backgroundColor: t.star, bottom: 12, left: 18, opacity: 0.6 }} />
+              <div style={{ position: 'absolute', bottom: 4, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: t.star, opacity: 0.8, fontWeight: 700 }}>{t.name}</div>
+              {bgId === t.id && <div style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: 9, backgroundColor: '#4ADE80', color: '#000', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✓</div>}
+            </div>
+          ))}
+        </div>
+
+        <div style={divider} />
+
+        {/* Ship */}
+        <div style={{ ...sectionLabel, marginTop: 20 }}>SHIP</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginBottom: 32 }}>
+          {SHIP_THEMES.map(t => (
+            <div key={t.id} onClick={() => onShip(t.id)} style={{
+              width: 56, height: 56, borderRadius: 12, cursor: 'pointer',
+              backgroundColor: lt ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)', position: 'relative',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
+              border: shipId === t.id ? `2.5px solid ${lt ? '#1E293B' : '#fff'}` : `2px solid ${lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)'}`,
+              boxShadow: shipId === t.id ? `0 0 12px ${t.body}44` : 'none',
+              transition: 'border-color 0.15s',
+            }}>
+              <svg width="28" height="32" viewBox="0 0 28 32">
+                <polygon points="14,0 6,10 22,10" fill={t.nose} />
+                <rect x="7" y="10" width="14" height="10" rx="1" fill={t.body} />
+                <polygon points="2,24 2,16 8,24" fill={t.wing} />
+                <polygon points="26,24 26,16 20,24" fill={t.wing} />
+                <ellipse cx="14" cy="26" rx="4" ry="5" fill={t.flame} opacity="0.85" />
+              </svg>
+              <div style={{ fontSize: 8, color: lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)', fontWeight: 700, marginTop: 2 }}>{t.name}</div>
+              {shipId === t.id && <div style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: 9, backgroundColor: '#4ADE80', color: '#000', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✓</div>}
+            </div>
+          ))}
+        </div>
       </div>
-      <div style={{ color: lt ? 'rgba(0,0,0,0.6)' : '#4ADE80', fontSize: 13, fontWeight: 700 }}>{DIFFICULTY_NAMES[value - 1]}</div>
+
+      <button onClick={onBack} style={{
+        padding: '12px 32px', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 700, letterSpacing: 2,
+        border: `1.5px solid ${lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`,
+        backgroundColor: 'transparent', color: subCol,
+      }}>← BACK</button>
     </div>
   );
 }
 
-function ThemePicker({ bgId, shipId, onBg, onShip, lt }: {
-  bgId: string; shipId: string;
-  onBg: (id: string) => void; onShip: (id: string) => void;
-  lt?: boolean;
+// ─── Level Select Screen ─────────────────────────────────────────────────────
+
+function starsDisplay(stars: 1 | 2 | 3): string {
+  return '★'.repeat(stars) + '☆'.repeat(3 - stars);
+}
+
+function LevelSelectScreen({ levelProgress, onSelect, onBack, onSettings, bgT }: {
+  levelProgress: LevelProgress;
+  onSelect: (levelNum: number) => void;
+  onBack: () => void;
+  onSettings: () => void;
+  bgT: BgTheme;
 }) {
-  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  const lt = bgT.light;
+  const textCol = lt ? '#1E293B' : '#fff';
+  const subCol = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  const tierNames = ['Beginner', 'Easy', 'Normal', 'Hard', 'Expert'];
+  const tierStarts = [1, 13, 25, 37, 49];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', marginTop: 16 }}>
-      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>BACKGROUND</div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        {BG_THEMES.map(t => (
-          <div key={t.id} onClick={() => onBg(t.id)}
-            style={{ ...swatchStyle, backgroundColor: t.bg, borderColor: bgId === t.id ? '#fff' : undefined }}>
-            <div style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: t.star, position: 'absolute', top: 10, left: 12, opacity: 0.8 }} />
-            <div style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: t.star, position: 'absolute', top: 22, right: 10, opacity: 0.5 }} />
-            <div style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: t.star, position: 'absolute', bottom: 12, left: 18, opacity: 0.6 }} />
-            {bgId === t.id && <div style={checkStyle}>✓</div>}
+    <div style={{
+      position: 'fixed', inset: 0,
+      backgroundColor: lt ? 'rgba(255,255,255,0.92)' : 'rgba(5,7,20,0.96)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      overflowY: 'auto', padding: '24px 16px 40px',
+    }}>
+      <div style={{ color: lt ? '#B45309' : '#FFD866', fontSize: 13, fontWeight: 800, letterSpacing: 3, marginBottom: 4 }}>HIT THE ANSWER</div>
+      <h2 style={{ color: textCol, fontSize: 28, fontWeight: 900, margin: '0 0 20px', letterSpacing: 3 }}>SELECT LEVEL</h2>
+
+      {[0, 1, 2, 3, 4].map(tier => {
+        const start = tierStarts[tier];
+        const end = tier < 4 ? tierStarts[tier + 1] - 1 : 60;
+        const levelNums = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+        return (
+          <div key={tier} style={{ width: '100%', maxWidth: 480, marginBottom: 20 }}>
+            <div style={{ color: subCol, fontSize: 11, fontWeight: 700, letterSpacing: 2, marginBottom: 8, textAlign: 'center' }}>
+              {tierNames[tier].toUpperCase()}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+              {levelNums.map(levelNum => {
+                const unlocked = levelNum === 1 || levelProgress[levelNum - 1] != null;
+                const prog = levelProgress[levelNum];
+                return (
+                  <button
+                    key={levelNum}
+                    disabled={!unlocked}
+                    onClick={() => onSelect(levelNum)}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                      padding: '8px 4px', borderRadius: 10, cursor: unlocked ? 'pointer' : 'default',
+                      border: prog
+                        ? `2px solid ${lt ? 'rgba(180,140,40,0.5)' : 'rgba(255,216,102,0.4)'}`
+                        : `2px solid ${lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)'}`,
+                      backgroundColor: !unlocked
+                        ? (lt ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.03)')
+                        : prog
+                          ? (lt ? 'rgba(180,140,40,0.12)' : 'rgba(255,216,102,0.08)')
+                          : (lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)'),
+                      opacity: unlocked ? 1 : 0.35,
+                    }}>
+                    <span style={{ color: textCol, fontSize: 14, fontWeight: 800 }}>{levelNum}</span>
+                    <span style={{ fontSize: 9, letterSpacing: 0.5, color: prog ? '#FFD866' : subCol, marginTop: 2 }}>
+                      {prog ? starsDisplay(prog.stars) : unlocked ? '—' : '🔒'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        ))}
-      </div>
-      <div style={{ color: labelColor, fontSize: 11, fontWeight: 700, letterSpacing: 2, marginTop: 4 }}>SHIP</div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        {SHIP_THEMES.map(t => (
-          <div key={t.id} onClick={() => onShip(t.id)}
-            style={{ ...swatchStyle, backgroundColor: 'rgba(255,255,255,0.05)', borderColor: shipId === t.id ? '#fff' : undefined }}>
-            <svg width="28" height="32" viewBox="0 0 28 32">
-              <polygon points="14,0 6,10 22,10" fill={t.nose} />
-              <rect x="7" y="10" width="14" height="10" rx="1" fill={t.body} />
-              <polygon points="2,24 2,16 8,24" fill={t.wing} />
-              <polygon points="26,24 26,16 20,24" fill={t.wing} />
-              <ellipse cx="14" cy="26" rx="4" ry="5" fill={t.flame} opacity="0.85" />
-            </svg>
-            {shipId === t.id && <div style={checkStyle}>✓</div>}
-          </div>
-        ))}
+        );
+      })}
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onBack} style={{
+          padding: '12px 32px', borderRadius: 12, border: `1.5px solid ${lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`,
+          backgroundColor: 'transparent', color: subCol, fontSize: 14, fontWeight: 700, letterSpacing: 2, cursor: 'pointer',
+        }}>← BACK</button>
+        <button onClick={onSettings} style={{
+          padding: '12px 32px', borderRadius: 12, border: `1.5px solid ${lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`,
+          backgroundColor: 'transparent', color: subCol, fontSize: 14, fontWeight: 700, letterSpacing: 2, cursor: 'pointer',
+        }}>⚙ SETTINGS</button>
       </div>
     </div>
   );
@@ -666,7 +794,7 @@ function ThemePicker({ bgId, shipId, onBg, onShip, lt }: {
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const g = useRef<GameState>(makeState(0, window.innerWidth, Number(localStorage.getItem('hta_diff') ?? '3') || 3));
+  const g = useRef<GameState>(makeState(0, window.innerWidth, 1));
   const stars = useRef<Star[]>(
     Array.from({ length: 60 }, () => ({
       x: Math.random() * window.innerWidth,
@@ -679,24 +807,33 @@ export default function App() {
   const keys = useRef({ left: false, right: false, space: false, spacePrev: false });
   const [gameKey, setGameKey] = useState(0);
   const [over, setOver] = useState(false);
-  const [started, setStarted] = useState(false);
+  const [screen, setScreen] = useState<Screen>('title');
   const [paused, setPaused] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState(1);
+  const [levelProgress, setLevelProgress] = useState<LevelProgress>(() => {
+    try { return JSON.parse(localStorage.getItem('hta_levels') ?? '{}'); } catch { return {}; }
+  });
+  const [levelCompleted, setLevelCompleted] = useState(false);
+  const [levelCompleteStars, setLevelCompleteStars] = useState<1 | 2 | 3>(1);
+  const [settingsFrom, setSettingsFrom] = useState<Screen>('title');
   const [bgThemeId, setBgThemeId] = useState(() => localStorage.getItem('hta_bg') ?? 'space');
   const [shipThemeId, setShipThemeId] = useState(() => localStorage.getItem('hta_ship') ?? 'classic');
   const [muted, setMuted] = useState(() => localStorage.getItem('hta_mute') === '1');
-  const [difficulty, setDifficulty] = useState(() => Number(localStorage.getItem('hta_diff') ?? '3') || 3);
   const mutedRef = useRef(muted);
-  const difficultyRef = useRef(difficulty);
+  const selectedLevelRef = useRef(selectedLevel);
+  const levelProgressRef = useRef(levelProgress);
 
-  // Keep refs in sync so animation loop always sees latest value
+  // Keep refs in sync so animation loop always sees latest values
   mutedRef.current = muted;
-  difficultyRef.current = difficulty;
+  selectedLevelRef.current = selectedLevel;
+  levelProgressRef.current = levelProgress;
+
+  const started = screen === 'game';
 
   // Persist settings
   useEffect(() => { localStorage.setItem('hta_bg', bgThemeId); }, [bgThemeId]);
   useEffect(() => { localStorage.setItem('hta_ship', shipThemeId); }, [shipThemeId]);
   useEffect(() => { localStorage.setItem('hta_mute', muted ? '1' : '0'); }, [muted]);
-  useEffect(() => { localStorage.setItem('hta_diff', String(difficulty)); }, [difficulty]);
   const scoreRef = useRef(0);
 
   const bgT = getBgTheme(bgThemeId);
@@ -707,12 +844,23 @@ export default function App() {
   const shipTRef = useRef(shipT); shipTRef.current = shipT;
 
   if (g.current._key !== gameKey) {
-    g.current = makeState(gameKey, window.innerWidth, difficultyRef.current);
+    g.current = makeState(gameKey, window.innerWidth, selectedLevelRef.current);
     setOver(false);
     setPaused(false);
+    setLevelCompleted(false);
   }
 
-  // Title screen loop
+  function saveLevelProgress(levelNum: number, stars: 1 | 2 | 3) {
+    const current = levelProgressRef.current;
+    if (!current[levelNum] || current[levelNum].stars < stars) {
+      const updated = { ...current, [levelNum]: { stars } };
+      levelProgressRef.current = updated;
+      setLevelProgress(updated);
+      localStorage.setItem('hta_levels', JSON.stringify(updated));
+    }
+  }
+
+  // Title/levels screen background loop
   useEffect(() => {
     if (started) return;
     const canvas = canvasRef.current!;
@@ -781,7 +929,7 @@ export default function App() {
       const s = g.current;
       const ctx = canvas.getContext('2d')!;
 
-      if (!s.over && !s.paused) {
+      if (!s.over && !s.paused && !s.levelComplete) {
         if (keys.current.left) s.shipX = Math.max(0, s.shipX - KEYBOARD_SPEED);
         if (keys.current.right) s.shipX = Math.min(sw - SHIP_W, s.shipX + KEYBOARD_SPEED);
         if (keys.current.space && !keys.current.spacePrev) {
@@ -794,6 +942,21 @@ export default function App() {
         for (const ev of s.soundEvents) playSound(ev, mutedRef.current);
         s.soundEvents = [];
         starOffset.current = (starOffset.current + 0.8) % sh;
+        if (s.levelComplete) {
+          scoreRef.current = s.score;
+          const earnedStars = computeStars(s.levelNum, s.mistakes);
+          const cur = levelProgressRef.current;
+          if (!cur[s.levelNum] || cur[s.levelNum].stars < earnedStars) {
+            const updated = { ...cur, [s.levelNum]: { stars: earnedStars } };
+            levelProgressRef.current = updated;
+            setLevelProgress(updated);
+            localStorage.setItem('hta_levels', JSON.stringify(updated));
+          }
+          draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, starOffset.current);
+          setLevelCompleted(true);
+          setLevelCompleteStars(earnedStars);
+          return;
+        }
         if (s.over) { scoreRef.current = s.score; draw(ctx, s, stars.current, sw, sh, bgTRef.current, shipTRef.current, starOffset.current); setOver(true); return; }
       }
 
@@ -831,24 +994,54 @@ export default function App() {
     border: 'none', borderRadius: 14, cursor: 'pointer', width: 220, textAlign: 'center',
   };
 
+  const ghostBtn: React.CSSProperties = {
+    ...btnStyle, backgroundColor: 'transparent',
+    border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`,
+    color: bgT.light ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)',
+    width: 'auto', padding: '12px 32px', fontSize: 15,
+  };
+
+  const openSettings = (from: Screen) => { setSettingsFrom(from); setScreen('settings'); };
+
   return (
     <>
       <canvas ref={canvasRef} width={window.innerWidth} height={window.innerHeight} style={{ display: 'block' }} />
 
+      {/* Settings screen */}
+      {screen === 'settings' && (
+        <SettingsScreen
+          bgId={bgThemeId} shipId={shipThemeId} muted={muted}
+          onBg={setBgThemeId} onShip={setShipThemeId} onMute={() => setMuted(m => !m)}
+          onBack={() => setScreen(settingsFrom)}
+          bgT={bgT}
+        />
+      )}
+
       {/* Title screen */}
-      {!started && (
+      {screen === 'title' && (
         <div style={{ ...overlayBase, justifyContent: 'flex-end', paddingBottom: '4%', gap: 12 }}>
-          <button onClick={() => { setStarted(true); setGameKey(k => k + 1); }}
+          <button onClick={() => setScreen('levels')}
             style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, whiteSpace: 'nowrap', width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
             START GAME
           </button>
-          <button onClick={() => setMuted(m => !m)}
-            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
-            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
-          </button>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} />
-          <DifficultySlider value={difficulty} onChange={setDifficulty} />
+          <button onClick={() => openSettings('title')} style={ghostBtn}>⚙  SETTINGS</button>
         </div>
+      )}
+
+      {/* Level select */}
+      {screen === 'levels' && (
+        <LevelSelectScreen
+          levelProgress={levelProgress}
+          onSelect={(levelNum) => {
+            setSelectedLevel(levelNum);
+            selectedLevelRef.current = levelNum;
+            setScreen('game');
+            setGameKey(k => k + 1);
+          }}
+          onBack={() => setScreen('title')}
+          onSettings={() => openSettings('levels')}
+          bgT={bgT}
+        />
       )}
 
       {/* Pause overlay (DOM) — canvas draws the dim already */}
@@ -858,31 +1051,48 @@ export default function App() {
           <div style={{ color: shipT.body, fontSize: 32, fontWeight: 900, letterSpacing: 4, marginTop: -12 }}>ANSWER</div>
           <h1 style={{ fontSize: 48, fontWeight: 900, color: bgT.light ? '#1E293B' : '#fff', margin: '8px 0 16px', letterSpacing: 4 }}>PAUSED</h1>
           <button onClick={() => { g.current.paused = false; setPaused(false); }} style={btnStyle}>▶  RESUME</button>
-          <button onClick={() => setGameKey(k => k + 1)} style={btnStyle}>↻  RESTART</button>
-          <button onClick={() => setMuted(m => !m)}
-            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
-            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
-          </button>
+          <button onClick={() => { g.current.paused = false; setPaused(false); setGameKey(k => k + 1); }} style={btnStyle}>↻  RESTART</button>
+          <button onClick={() => { g.current.paused = false; setPaused(false); setScreen('levels'); }} style={ghostBtn}>☰  LEVELS</button>
+          <button onClick={() => openSettings('game')} style={ghostBtn}>⚙  SETTINGS</button>
           <div style={{ color: bgT.light ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 14, marginTop: 4 }}>or press ESC to resume</div>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={bgT.light} />
+        </div>
+      )}
+
+      {/* Level complete */}
+      {started && levelCompleted && (
+        <div style={{ ...overlayBase, backgroundColor: bgT.light ? 'rgba(255,255,255,0.92)' : 'rgba(5,7,20,0.92)' }}>
+          <div style={{ color: bgT.light ? '#B45309' : '#FFD866', fontSize: 13, fontWeight: 800, letterSpacing: 3 }}>LEVEL {selectedLevel} COMPLETE!</div>
+          <h1 style={{ fontSize: 52, fontWeight: 900, color: '#4ADE80', margin: '8px 0', letterSpacing: 2 }}>
+            {starsDisplay(levelCompleteStars)}
+          </h1>
+          <p style={{ color: bgT.light ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)', fontSize: 14, margin: '0 0 16px' }}>
+            {levelCompleteStars === 3 ? 'Perfect! No mistakes!' : levelCompleteStars === 2 ? 'Great job!' : 'Level cleared!'}
+          </p>
+          {selectedLevel < LEVELS.length && (
+            <button onClick={() => {
+              const next = selectedLevel + 1;
+              setSelectedLevel(next);
+              selectedLevelRef.current = next;
+              setLevelCompleted(false);
+              setGameKey(k => k + 1);
+            }} style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
+              NEXT LEVEL →
+            </button>
+          )}
+          <button onClick={() => { setLevelCompleted(false); setScreen('levels'); }} style={ghostBtn}>☰  LEVELS</button>
         </div>
       )}
 
       {/* Game over */}
       {started && over && (
-        <div style={{ ...overlayBase, backgroundColor: bgT.light ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)', overflowY: 'auto', paddingBottom: 32 }}>
+        <div style={{ ...overlayBase, backgroundColor: bgT.light ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)' }}>
           <h1 style={{ fontSize: 46, fontWeight: 900, color: '#FF4757', letterSpacing: 6, margin: 0 }}>GAME OVER</h1>
-          <p style={{ fontSize: 28, color: bgT.light ? '#1E293B' : '#fff', fontWeight: 600, margin: '0 0 8px' }}>Score: {scoreRef.current}</p>
+          <p style={{ fontSize: 18, color: bgT.light ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)', margin: '4px 0 16px' }}>Level {selectedLevel} — Score: {scoreRef.current}</p>
           <button onClick={() => setGameKey(k => k + 1)}
             style={{ ...btnStyle, fontSize: 20, padding: '16px 48px', letterSpacing: 3, whiteSpace: 'nowrap', width: 'auto', boxShadow: '0 0 30px rgba(74,108,247,0.4)' }}>
-            PLAY AGAIN
+            TRY AGAIN
           </button>
-          <button onClick={() => setMuted(m => !m)}
-            style={{ ...btnStyle, backgroundColor: bgT.light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)', border: `1.5px solid ${bgT.light ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)'}`, color: bgT.light ? (muted ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)') : (muted ? 'rgba(255,255,255,0.35)' : '#fff'), width: 'auto', padding: '10px 24px', fontSize: 15 }}>
-            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
-          </button>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={bgT.light} />
-          <DifficultySlider value={difficulty} onChange={setDifficulty} lt={bgT.light} />
+          <button onClick={() => setScreen('levels')} style={ghostBtn}>☰  LEVELS</button>
         </div>
       )}
     </>

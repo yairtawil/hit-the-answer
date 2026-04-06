@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
-  SHIP_W, BULLET_W, BULLET_H, NUM_SIZE, MAX_LIVES,
+  SHIP_W, BULLET_W, BULLET_H, POWER_BULLET_W, NUM_SIZE, MAX_LIVES,
   POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, DOUBLE_SHOT_DURATION, NOTIF_LIFETIME, rockScale,
   DRAG_THRESHOLD, TAP_MAX_DURATION,
   BG_THEMES, SHIP_THEMES, DIFFICULTY_NAMES,
@@ -451,26 +451,6 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
       )}
 
       {s.numbers.map(n => {
-        // Double shot rock
-        if (n.doubleShot) {
-          return (
-            <View key={n.id} style={{
-              position: 'absolute', left: n.x, top: n.y,
-              width: NUM_SIZE, height: NUM_SIZE,
-              backgroundColor: '#1a1a0a',
-              borderWidth: 2, borderColor: '#FFD866',
-              borderRadius: 10,
-              alignItems: 'center', justifyContent: 'center',
-              shadowColor: '#FFD866', shadowRadius: 10, shadowOpacity: 0.6, shadowOffset: { width: 0, height: 0 },
-            }}>
-              {/* Two parallel bullet shapes */}
-              <View style={{ flexDirection: 'row', gap: 5 }}>
-                <View style={{ width: 5, height: 16, borderRadius: 3, backgroundColor: '#FFD866', opacity: 0.9 }} />
-                <View style={{ width: 5, height: 16, borderRadius: 3, backgroundColor: '#FFD866', opacity: 0.9 }} />
-              </View>
-            </View>
-          );
-        }
         // Gift rock — present box
         if (n.gift) {
           return (
@@ -563,16 +543,24 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
         );
       })}
 
-      {s.bullets.map(b => (
-        <View key={b.id} style={[styles.bullet, { left: b.x, top: b.y, backgroundColor: b.twin ? '#FFF176' : '#FFD866' }]}>
-          <View style={styles.bulletGlow} />
-        </View>
-      ))}
+      {s.bullets.map(b => {
+        const bw = b.power ? POWER_BULLET_W : BULLET_W;
+        return (
+          <View key={b.id} style={[styles.bullet, {
+            left: b.x, top: b.y,
+            width: bw, borderRadius: bw / 2,
+            backgroundColor: b.power ? '#FFF176' : '#FFD866',
+            shadowRadius: b.power ? 16 : 8,
+          }]}>
+            <View style={[styles.bulletGlow, { width: bw + 6, borderRadius: (bw + 6) / 2 }]} />
+          </View>
+        );
+      })}
 
       {s.powerups.map(pu => {
-        const puColor = pu.kind === 'life' ? '#FF4757' : pu.kind === 'slow' ? '#00BFFF' : pu.kind === 'shield' ? '#FFD866' : pu.kind === 'fast' ? '#C850C0' : '#FF2D2D';
-        const puBg = pu.kind === 'life' ? 'rgba(255,71,87,0.25)' : pu.kind === 'slow' ? 'rgba(0,191,255,0.25)' : pu.kind === 'shield' ? 'rgba(255,216,102,0.25)' : pu.kind === 'fast' ? 'rgba(200,80,192,0.25)' : 'rgba(255,45,45,0.25)';
-        const puIcon = pu.kind === 'life' ? '♥' : pu.kind === 'slow' ? '❄️' : pu.kind === 'shield' ? '🛡️' : pu.kind === 'fast' ? '⚡' : '💀';
+        const puColor = pu.kind === 'life' ? '#FF4757' : pu.kind === 'slow' ? '#00BFFF' : pu.kind === 'shield' ? '#FFD866' : pu.kind === 'fast' ? '#C850C0' : pu.kind === 'double_shot' ? '#FFD866' : '#FF2D2D';
+        const puBg = pu.kind === 'life' ? 'rgba(255,71,87,0.25)' : pu.kind === 'slow' ? 'rgba(0,191,255,0.25)' : pu.kind === 'shield' ? 'rgba(255,216,102,0.25)' : pu.kind === 'fast' ? 'rgba(200,80,192,0.25)' : pu.kind === 'double_shot' ? 'rgba(255,216,102,0.2)' : 'rgba(255,45,45,0.25)';
+        const puIcon = pu.kind === 'life' ? '♥' : pu.kind === 'slow' ? '❄️' : pu.kind === 'shield' ? '🛡️' : pu.kind === 'fast' ? '⚡' : pu.kind === 'double_shot' ? '💥' : '💀';
         return (
           <View key={pu.id} style={[styles.powerup, { left: pu.x, top: pu.y, borderColor: puColor, backgroundColor: puBg, shadowColor: puColor }]}>
             <Text style={styles.powerupIcon}>{puIcon}</Text>

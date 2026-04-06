@@ -36,6 +36,91 @@ export const DIFFICULTY_NAMES = ['Beginner', 'Easy', 'Normal', 'Hard', 'Expert']
 const DIFFICULTY_FALL_MUL  = [0.45, 0.7, 1.0, 1.4, 1.9];
 const DIFFICULTY_FALL_RAMP = [0.01, 0.025, 0.05, 0.075, 0.12];
 
+// ─── Levels ───────────────────────────────────────────────────────────────────
+
+export type LevelDef = {
+  difficulty: number;          // 1–5 maps to existing difficulty system
+  questionsToWin: number;      // correct answers needed to complete level
+  starThresholds: [number, number]; // [maxMistakes for 3★, maxMistakes for 2★]
+};
+
+export const LEVELS: LevelDef[] = [
+  // Difficulty 1 – Beginner (levels 1–12)
+  { difficulty: 1, questionsToWin: 3,  starThresholds: [0, 2] },
+  { difficulty: 1, questionsToWin: 4,  starThresholds: [0, 2] },
+  { difficulty: 1, questionsToWin: 5,  starThresholds: [0, 2] },
+  { difficulty: 1, questionsToWin: 5,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 10, starThresholds: [0, 1] },
+  { difficulty: 1, questionsToWin: 12, starThresholds: [0, 1] },
+  // Difficulty 2 – Easy (levels 13–24)
+  { difficulty: 2, questionsToWin: 5,  starThresholds: [0, 2] },
+  { difficulty: 2, questionsToWin: 5,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 9,  starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 10, starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 11, starThresholds: [0, 1] },
+  { difficulty: 2, questionsToWin: 12, starThresholds: [0, 1] },
+  // Difficulty 3 – Normal (levels 25–36)
+  { difficulty: 3, questionsToWin: 5,  starThresholds: [0, 2] },
+  { difficulty: 3, questionsToWin: 5,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 9,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 9,  starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 10, starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 11, starThresholds: [0, 1] },
+  { difficulty: 3, questionsToWin: 12, starThresholds: [0, 1] },
+  // Difficulty 4 – Hard (levels 37–48)
+  { difficulty: 4, questionsToWin: 5,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 5,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 9,  starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 10, starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 11, starThresholds: [0, 1] },
+  { difficulty: 4, questionsToWin: 12, starThresholds: [0, 1] },
+  // Difficulty 5 – Expert (levels 49–60)
+  { difficulty: 5, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 6,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 7,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 8,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 9,  starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 10, starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 11, starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 12, starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 14, starThresholds: [0, 1] },
+  { difficulty: 5, questionsToWin: 15, starThresholds: [0, 1] },
+];
+
+/** Returns 3, 2 or 1 stars based on how many mistakes were made. */
+export function computeStars(levelNum: number, mistakes: number): 1 | 2 | 3 {
+  const def = LEVELS[levelNum - 1];
+  if (!def) return 1;
+  if (mistakes <= def.starThresholds[0]) return 3;
+  if (mistakes <= def.starThresholds[1]) return 2;
+  return 1;
+}
+
 export function shipY(sh: number): number {
   return sh - 130;
 }
@@ -125,13 +210,13 @@ export function getNumShape(id: string): NumShape {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type Question = { text: string; answer: number };
-export const DOUBLE_SHOT_OFFSET = 8; // px between the two barrels
-export type Bullet = { id: string; x: number; y: number; twin?: boolean };
-export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number; bomb?: boolean; gift?: boolean; doubleShot?: boolean };
+export const POWER_BULLET_W = 14; // width of a powered-up bullet
+export type Bullet = { id: string; x: number; y: number; power?: boolean };
+export type FallingNum = { id: string; value: number; x: number; y: number; correct: boolean; hp: number; maxHp: number; bomb?: boolean; gift?: boolean };
 export type Particle = { id: string; x: number; y: number; vx: number; vy: number; color: string; life: number; maxLife: number; size: number };
 export type Star = { x: number; y: number; r: number; o: number };
 
-export type PowerUpKind = 'life' | 'slow' | 'shield' | 'fast' | 'lose_life';
+export type PowerUpKind = 'life' | 'slow' | 'shield' | 'fast' | 'lose_life' | 'double_shot';
 export type PowerUp = { id: string; kind: PowerUpKind; x: number; y: number; bad: boolean };
 
 export const NOTIF_LIFETIME = 90; // ~1.5 seconds at 60fps
@@ -169,8 +254,13 @@ export type GameState = {
   roundCooldown: number;
   // Double shot timer
   doubleShotTimer: number;
-  // Difficulty level 1–5
+  // Difficulty level 1–5 (derived from levelNum via LEVELS)
   difficulty: number;
+  // Level system
+  levelNum: number;
+  questionsToWin: number;
+  levelComplete: boolean;
+  mistakes: number;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -254,9 +344,8 @@ export function createNumbers(answer: number, sw: number, score: number, difficu
     });
   }
 
-  // Special rocks appear from score >= 3 — gift (powerup) or doubleShot, alternating
+  // Gift rock appears from score >= 3
   if (score >= 3) {
-    const kind = Math.random() < 0.5 ? 'gift' : 'doubleShot';
     let gx = 0;
     let attempts = 0;
     do {
@@ -271,8 +360,7 @@ export function createNumbers(answer: number, sw: number, score: number, difficu
       correct: false,
       hp: 1,
       maxHp: 1,
-      gift: kind === 'gift',
-      doubleShot: kind === 'doubleShot',
+      gift: true,
     });
   }
 
@@ -299,17 +387,11 @@ export function spawnExplosion(cx: number, cy: number, correct: boolean): Partic
 }
 
 export function spawnBullets(s: GameState, shipX: number, sh: number): void {
-  const bx = shipX + SHIP_W / 2 - BULLET_W / 2;
+  const power = s.doubleShotTimer > 0;
+  const bw = power ? POWER_BULLET_W : BULLET_W;
+  const bx = shipX + SHIP_W / 2 - bw / 2;
   const by = shipY(sh) - BULLET_H;
-  if (s.doubleShotTimer > 0) {
-    const id = `b${Date.now()}-${Math.random()}`;
-    s.bullets.push(
-      { id: id + 'L', x: bx - DOUBLE_SHOT_OFFSET, y: by, twin: true },
-      { id: id + 'R', x: bx + DOUBLE_SHOT_OFFSET, y: by, twin: true },
-    );
-  } else {
-    s.bullets.push({ id: `b${Date.now()}-${Math.random()}`, x: bx, y: by });
-  }
+  s.bullets.push({ id: `b${Date.now()}-${Math.random()}`, x: bx, y: by, power });
 }
 
 export function overlaps(
@@ -319,7 +401,9 @@ export function overlaps(
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-export function makeState(key: number, sw: number, difficulty = 3): GameState {
+export function makeState(key: number, sw: number, levelNum = 1): GameState {
+  const def = LEVELS[Math.max(0, Math.min(LEVELS.length - 1, levelNum - 1))];
+  const difficulty = def.difficulty;
   const q = createQuestion(difficulty);
   return {
     _key: key,
@@ -346,6 +430,10 @@ export function makeState(key: number, sw: number, difficulty = 3): GameState {
     roundCooldown: 0,
     doubleShotTimer: 0,
     difficulty,
+    levelNum,
+    questionsToWin: def.questionsToWin,
+    levelComplete: false,
+    mistakes: 0,
   };
 }
 
@@ -377,6 +465,7 @@ function maybeSpawnPowerUp(s: GameState, nx: number, ny: number, good: boolean):
 }
 
 export function tickGame(s: GameState, sw: number, sh: number): void {
+  if (s.over || s.levelComplete) return;
   const speedMul = s.slowTimer > 0 ? 0.4 : s.fastTimer > 0 ? 1.8 : 1;
   const _di = Math.max(0, Math.min(4, (s.difficulty ?? 3) - 1));
   const fallSpeed = (BASE_FALL_SPEED * DIFFICULTY_FALL_MUL[_di] + s.score * DIFFICULTY_FALL_RAMP[_di]) * speedMul;
@@ -402,6 +491,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     return true;
   });
   if (correctFell) {
+    s.mistakes++;
     if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
     dropOneLevel(s);
   }
@@ -423,13 +513,15 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
       const rSize = NUM_SIZE * rs;
       const rx = n.x + NUM_SIZE / 2 - rSize / 2;
       const ry = n.y + NUM_SIZE / 2 - rSize / 2;
-      if (overlaps(b.x, b.y, BULLET_W, BULLET_H, rx, ry, rSize, rSize)) {
+      const bw = b.power ? POWER_BULLET_W : BULLET_W;
+      if (overlaps(b.x, b.y, bw, BULLET_H, rx, ry, rSize, rSize)) {
         hit = true;
         const cx = n.x + NUM_SIZE / 2, cy = n.y + NUM_SIZE / 2;
         if (n.bomb) {
           // Bomb hit: lose life but NO new round
           s.numbers.splice(i, 1);
           s.particles.push(...spawnExplosion(cx, cy, false));
+          s.mistakes++;
           if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
           addNotif(s, '💣 BOOM!', '#FF4444', cx, cy - 30);
           s.soundEvents.push('bombHit');
@@ -438,7 +530,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
           s.numbers.splice(i, 1);
           s.particles.push(...spawnExplosion(cx, cy, true));
           addNotif(s, '🎁 GIFT!', '#4ADE80', cx, cy - 30);
-          const goodKinds: PowerUpKind[] = ['life', 'slow', 'shield'];
+          const goodKinds: PowerUpKind[] = ['life', 'slow', 'shield', 'double_shot'];
           s.powerups.push({
             id: `pu${Date.now()}-${Math.random()}`,
             kind: goodKinds[Math.floor(Math.random() * goodKinds.length)],
@@ -447,17 +539,12 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
             bad: false,
           });
           s.soundEvents.push('goodHit');
-        } else if (n.doubleShot) {
-          // Double shot rock hit: activate double shot, no life loss, no new round
-          s.numbers.splice(i, 1);
-          s.particles.push(...spawnExplosion(cx, cy, true));
-          s.doubleShotTimer = DOUBLE_SHOT_DURATION;
-          addNotif(s, '🔫 DOUBLE SHOT!', '#FFD866', cx, cy - 30);
-          s.soundEvents.push('goodHit');
         } else if (n.correct) {
-          n.hp--;
-          // Chip particles on each hit
-          s.particles.push(...spawnExplosion(cx, cy, true).map(p => ({ ...p, size: p.size * 0.7 })));
+          const damage = b.power ? 2 : 1;
+          n.hp = Math.max(0, n.hp - damage);
+          // Chip particles — bigger for power shot
+          const chipScale = b.power ? 1.1 : 0.7;
+          s.particles.push(...spawnExplosion(cx, cy, true).map(p => ({ ...p, size: p.size * chipScale })));
           s.soundEvents.push('goodHit');
           if (n.hp <= 0) {
             // Rock destroyed — score + new round
@@ -469,6 +556,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
             s.shipLevel = shipLevelFromStreak(s.streak);
             newRound = true;
             maybeSpawnPowerUp(s, n.x, n.y, true);
+            if (s.score >= s.questionsToWin) { s.levelComplete = true; newRound = false; }
             if (s.shipLevel > prevLevel) {
               const msgs = ['', 'LEVEL UP! 🚀', 'DOUBLE FLAME! 🔥🔥', 'TRIPLE FLAME! 🔥🔥🔥', 'MAX POWER! ⚡'];
               addNotif(s, msgs[s.shipLevel], '#FFD866', sw / 2, sh * 0.35, 28);
@@ -481,6 +569,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
           // Wrong rock — instant destroy + new question
           s.particles.push(...spawnExplosion(cx, cy, false));
           s.numbers.splice(i, 1);
+          s.mistakes++;
           if (s.shieldTimer <= 0) s.lives = Math.max(0, s.lives - 1);
           dropOneLevel(s);
           newRound = true;
@@ -500,7 +589,8 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
     let hit = false;
     for (let i = s.powerups.length - 1; i >= 0; i--) {
       const pu = s.powerups[i];
-      if (overlaps(b.x, b.y, BULLET_W, BULLET_H, pu.x, pu.y, POWERUP_SIZE, POWERUP_SIZE)) {
+      const pbw = b.power ? POWER_BULLET_W : BULLET_W;
+      if (overlaps(b.x, b.y, pbw, BULLET_H, pu.x, pu.y, POWERUP_SIZE, POWERUP_SIZE)) {
         hit = true;
         const pcx = pu.x + POWERUP_SIZE / 2, pcy = pu.y + POWERUP_SIZE / 2;
         if (pu.kind === 'life') { s.lives = Math.min(MAX_LIVES_CAP, s.lives + 1); addNotif(s, 'EXTRA LIFE! ❤️', '#FF4757', pcx, pcy - 20); }
@@ -508,6 +598,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
         else if (pu.kind === 'shield') { s.shieldTimer = POWERUP_DURATION; addNotif(s, 'SHIELD UP! 🛡️', '#FFD866', pcx, pcy - 20); }
         else if (pu.kind === 'fast') { s.fastTimer = BAD_EFFECT_DURATION; addNotif(s, 'SPEED UP! ⚡', '#C850C0', pcx, pcy - 20); }
         else if (pu.kind === 'lose_life') { s.lives = Math.max(0, s.lives - 1); addNotif(s, 'OUCH! 💀', '#FF2D2D', pcx, pcy - 20); }
+        else if (pu.kind === 'double_shot') { s.doubleShotTimer = DOUBLE_SHOT_DURATION; addNotif(s, '💥 POWER SHOT!', '#FFD866', pcx, pcy - 20); }
         s.particles.push(...spawnExplosion(pcx, pcy, !pu.bad));
         s.powerups.splice(i, 1);
         break;
@@ -517,9 +608,9 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
   }
   s.bullets = survivingBullets;
 
-  // New round (don't clear powerups, keep gift/doubleShot rocks)
+  // New round (don't clear powerups, keep gift rocks)
   if (newRound) {
-    const surviving = s.numbers.filter(n => n.gift || n.doubleShot);
+    const surviving = s.numbers.filter(n => n.gift);
     const q = createQuestion(s.difficulty);
     s.question = q;
     s.numbers = [...surviving, ...createNumbers(q.answer, sw, s.score, s.difficulty)];
@@ -554,6 +645,7 @@ export function tickGame(s: GameState, sw: number, sh: number): void {
       else if (pu.kind === 'shield') { s.shieldTimer = POWERUP_DURATION; addNotif(s, 'SHIELD UP! 🛡️', '#FFD866', pcx, pcy - 20); }
       else if (pu.kind === 'fast') { s.fastTimer = BAD_EFFECT_DURATION; addNotif(s, 'SPEED UP! ⚡', '#C850C0', pcx, pcy - 20); }
       else if (pu.kind === 'lose_life') { s.lives = Math.max(0, s.lives - 1); addNotif(s, 'OUCH! 💀', '#FF2D2D', pcx, pcy - 20); }
+      else if (pu.kind === 'double_shot') { s.doubleShotTimer = DOUBLE_SHOT_DURATION; addNotif(s, '💥 POWER SHOT!', '#FFD866', pcx, pcy - 20); }
       s.particles.push(...spawnExplosion(pcx, pcy, !pu.bad));
       return false;
     }
