@@ -27,9 +27,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Update npm
-        run: npm install -g npm@latest
-
       - name: Install dependencies (web + common only)
         run: npm ci --workspace=packages/common --workspace=packages/web
 
