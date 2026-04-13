@@ -12,10 +12,13 @@ import {
   SHIP_W, BULLET_W, BULLET_H, POWER_BULLET_W, NUM_SIZE, MAX_LIVES,
   POWERUP_SIZE, POWERUP_DURATION, BAD_EFFECT_DURATION, DOUBLE_SHOT_DURATION, NOTIF_LIFETIME, rockScale,
   DRAG_THRESHOLD, TAP_MAX_DURATION,
-  BG_THEMES, SHIP_THEMES, DIFFICULTY_NAMES,
+  BG_THEMES, SHIP_THEMES, LEVELS, DIFFICULTY_NAMES,
   type GameState, type Star,
-  makeState, tickGame, shipY, shipScale, getBgTheme, getShipTheme, spawnBullets,
+  makeState, tickGame, shipY, shipScale, getBgTheme, getShipTheme, spawnBullets, computeStars,
 } from '@hit-the-answer/common';
+
+type LevelProgress = Record<number, { stars: 1 | 2 | 3 }>;
+type Screen = 'title' | 'levels' | 'game';
 
 const { width: sw, height: sh } = Dimensions.get('window');
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44;
@@ -57,9 +60,10 @@ function makeWavB64(freqStart: number, freqEnd: number, ms: number, vol = 0.22):
 
 // Pre-generate base64 WAV data at module load time (pure JS, no I/O)
 const SOUND_B64: Record<string, string> = {
+  fire:    makeWavB64(900, 400,  70, 0.07),
   goodHit: makeWavB64(660, 1320, 180, 0.18),
   badHit:  makeWavB64(180, 45,   220, 0.22),
-  bombHit: makeWavB64(120, 30,   300, 0.25),
+  bombHit: makeWavB64(220, 30,   300, 0.28),
 };
 
 const _sounds: Partial<Record<string, Audio.Sound>> = {};
@@ -145,52 +149,39 @@ const tp = StyleSheet.create({
   checkText: { color: '#000', fontSize: 10, fontWeight: '900', lineHeight: 13 },
 });
 
-// ─── Difficulty Picker ───────────────────────────────────────────────────────
-
-function DifficultyPicker({ value, onChange, lt }: { value: number; onChange: (v: number) => void; lt: boolean }) {
-  const labelColor = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
-  const activeColor = '#4A6CF7';
-  return (
-    <View style={{ alignItems: 'center', marginTop: 10, gap: 6 }}>
-      <Text style={{ color: labelColor, fontSize: 10, fontWeight: '700', letterSpacing: 2 }}>DIFFICULTY</Text>
-      <View style={{ flexDirection: 'row', gap: 6 }}>
-        {[1, 2, 3, 4, 5].map(level => (
-          <TouchableOpacity key={level} onPress={() => onChange(level)} activeOpacity={0.7}
-            style={{
-              width: 44, height: 44, borderRadius: 10,
-              alignItems: 'center', justifyContent: 'center',
-              backgroundColor: value === level ? activeColor : (lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'),
-              borderWidth: 1.5,
-              borderColor: value === level ? activeColor : (lt ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)'),
-            }}>
-            <Text style={{ color: value === level ? '#fff' : (lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)'), fontSize: 15, fontWeight: '700' }}>
-              {level}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Text style={{ color: lt ? 'rgba(0,0,0,0.6)' : '#4ADE80', fontSize: 13, fontWeight: '700' }}>
-        {DIFFICULTY_NAMES[value - 1]}
-      </Text>
-    </View>
-  );
-}
-
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App(): React.JSX.Element {
   const [, rerender] = useState(0);
   const [gameKey, setGameKey] = useState(0);
-  const [started, setStarted] = useState(false);
+  const [screen, setScreen] = useState<Screen>('title');
+  const [selectedLevel, setSelectedLevel] = useState(1);
+  const [levelProgress, setLevelProgress] = useState<LevelProgress>({});
+  const [levelCompleted, setLevelCompleted] = useState(false);
+  const [levelCompleteStars, setLevelCompleteStars] = useState<1 | 2 | 3>(1);
   const [bgThemeId, setBgThemeId] = useState('space');
   const [shipThemeId, setShipThemeId] = useState('classic');
   const [muted, setMuted] = useState(false);
-  const [difficulty, setDifficulty] = useState(3);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [cheatUnlocked, setCheatUnlocked] = useState(false);
+  const cheatTapCount = useRef(0);
+  const cheatTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mutedRef = useRef(muted);
-  const difficultyRef = useRef(difficulty);
+  const selectedLevelRef = useRef(selectedLevel);
+  const levelProgressRef = useRef(levelProgress);
   mutedRef.current = muted;
-  difficultyRef.current = difficulty;
+  selectedLevelRef.current = selectedLevel;
+  levelProgressRef.current = levelProgress;
+
+  function saveLevelProgress(levelNum: number, stars: 1 | 2 | 3) {
+    const current = levelProgressRef.current;
+    if (!current[levelNum] || current[levelNum].stars < stars) {
+      const updated = { ...current, [levelNum]: { stars } };
+      levelProgressRef.current = updated;
+      setLevelProgress(updated);
+      AsyncStorage.setItem('hta_levels', JSON.stringify(updated));
+    }
+  }
 
   // Load settings and init sounds on mount
   useEffect(() => {
@@ -198,11 +189,11 @@ export default function App(): React.JSX.Element {
       const bg = await AsyncStorage.getItem('hta_bg');
       const ship = await AsyncStorage.getItem('hta_ship');
       const m = await AsyncStorage.getItem('hta_muted');
-      const diff = await AsyncStorage.getItem('hta_diff');
+      const lvls = await AsyncStorage.getItem('hta_levels');
       if (bg) setBgThemeId(bg);
       if (ship) setShipThemeId(ship);
       if (m) setMuted(m === '1');
-      if (diff) setDifficulty(Number(diff) || 3);
+      if (lvls) { try { const p = JSON.parse(lvls); setLevelProgress(p); levelProgressRef.current = p; } catch {} }
       setSettingsLoaded(true);
     })();
     initSounds();
@@ -213,8 +204,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_bg', bgThemeId); }, [bgThemeId, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_ship', shipThemeId); }, [shipThemeId, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_muted', muted ? '1' : '0'); }, [muted, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) AsyncStorage.setItem('hta_diff', String(difficulty)); }, [difficulty, settingsLoaded]);
-  const g = useRef<GameState>(makeState(0, sw, 3));
+  const g = useRef<GameState>(makeState(0, sw, 1));
 
   const bgT = getBgTheme(bgThemeId);
   const shipT = getShipTheme(shipThemeId);
@@ -230,12 +220,14 @@ export default function App(): React.JSX.Element {
   const starOffset = useRef(0);
 
   if (g.current._key !== gameKey) {
-    g.current = makeState(gameKey, sw, difficultyRef.current);
+    g.current = makeState(gameKey, sw, selectedLevelRef.current);
+    setLevelCompleted(false);
   }
 
   useEffect(() => {
     const s = g.current;
     let raf: number;
+    let handled = false;
     const step = () => {
       if (s.over) { rerender(c => c + 1); return; }
       if (!s.paused) {
@@ -243,6 +235,13 @@ export default function App(): React.JSX.Element {
         for (const ev of s.soundEvents) playMobileSound(ev, mutedRef.current);
         s.soundEvents = [];
         starOffset.current = (starOffset.current + 0.8) % sh;
+        if (s.levelComplete && !handled) {
+          handled = true;
+          const earned = computeStars(s.levelNum, s.mistakes);
+          saveLevelProgress(s.levelNum, earned);
+          setLevelCompleted(true);
+          setLevelCompleteStars(earned);
+        }
       }
       rerender(c => c + 1);
       raf = requestAnimationFrame(step);
@@ -283,6 +282,7 @@ export default function App(): React.JSX.Element {
         if (s.over || s.paused) return;
         const elapsed = Date.now() - s.touchStartTime;
         if (!s.isDragging && elapsed < TAP_MAX_DURATION && Math.abs(gs.dx) < DRAG_THRESHOLD) {
+          playMobileSound('fire', mutedRef.current);
           spawnBullets(s, s.shipX, sh);
         }
         s.isDragging = false;
@@ -311,7 +311,7 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
   const pauseBtnTextCol = lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.7)';
 
   const starViews = stars.map((st, i) => {
-    const scrollY = started && !s.over ? (st.y + starOffset.current) % sh : st.y;
+    const scrollY = screen === 'game' && !s.over ? (st.y + starOffset.current) % sh : st.y;
     return lt ? (
       <Text key={i} style={{
         position: 'absolute', left: st.x - 4, top: scrollY - 4,
@@ -359,7 +359,7 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
   );
 
   // ─── Title screen ───
-  if (!started) {
+  if (screen === 'title') {
     return (
       <View style={[styles.root, { backgroundColor: bgT.bg }]}>
         <StatusBar style="light" />
@@ -370,8 +370,8 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
           <Text style={[styles.titleAnswer, { color: shipT.body }]}>ANSWER</Text>
           <Text style={[styles.titleTagline, { color: taglineCol }]}>Shoot the right number!</Text>
           <TouchableOpacity style={[styles.startBtn, { backgroundColor: shipT.body, shadowColor: shipT.body }]}
-            activeOpacity={0.7} onPress={() => { setStarted(true); setGameKey(k => k + 1); }}>
-            <Text style={styles.startBtnText}>START GAME</Text>
+            activeOpacity={0.7} onPress={() => setScreen('levels')}>
+            <Text style={styles.startBtnText}>SELECT LEVEL</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.muteBtn, {
             borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
@@ -380,8 +380,96 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
             <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
           </TouchableOpacity>
           <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
-          <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
         </View>
+      </View>
+    );
+  }
+
+  // ─── Level select screen ───
+  if (screen === 'levels') {
+    const highestCleared = Math.max(0, ...Object.keys(levelProgress).map(Number));
+    const maxUnlocked = cheatUnlocked ? LEVELS.length : Math.min(LEVELS.length, highestCleared + 1);
+    function handleCheatTap() {
+      cheatTapCount.current += 1;
+      if (cheatTapTimer.current) clearTimeout(cheatTapTimer.current);
+      if (cheatTapCount.current >= 5) {
+        cheatTapCount.current = 0;
+        setCheatUnlocked(true);
+      } else {
+        cheatTapTimer.current = setTimeout(() => { cheatTapCount.current = 0; }, 1000);
+      }
+    }
+    const TIER_NAMES = DIFFICULTY_NAMES;
+    const menuBg = lt ? '#F1F5F9' : '#0D1128';
+    const cardBorder = lt ? 'rgba(0,0,0,0.1)' : 'rgba(74,108,247,0.3)';
+    const tierLabelCol = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+    return (
+      <View style={[styles.root, { backgroundColor: bgT.bg }]}>
+        <StatusBar style="light" />
+        {starViews}
+        <View style={{ position: 'absolute', top: HUD_TOP, left: 16, zIndex: 20 }}>
+          <TouchableOpacity onPress={() => setScreen('title')} activeOpacity={0.7}
+            style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 10,
+              backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+              borderWidth: 1, borderColor: lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)' }}>
+            <Text style={{ color: textCol, fontSize: 14, fontWeight: '700' }}>← BACK</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingTop: HUD_TOP + 48, paddingBottom: 40, paddingHorizontal: 16 }}>
+          <TouchableOpacity activeOpacity={1} onPress={handleCheatTap}>
+            <Text style={{ color: textCol, fontSize: 22, fontWeight: '900', letterSpacing: 4, textAlign: 'center', marginBottom: 20 }}>
+              SELECT LEVEL{cheatUnlocked ? ' 🔓' : ''}
+            </Text>
+          </TouchableOpacity>
+          {[0, 1, 2, 3, 4].map(tier => (
+            <View key={tier} style={{ marginBottom: 20, backgroundColor: menuBg, borderRadius: 16, borderWidth: 1, borderColor: cardBorder, padding: 14 }}>
+              <Text style={{ color: tierLabelCol, fontSize: 11, fontWeight: '700', letterSpacing: 2, marginBottom: 10 }}>
+                {TIER_NAMES[tier].toUpperCase()}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {Array.from({ length: 12 }, (_, i) => {
+                  const levelNum = tier * 12 + i + 1;
+                  const unlocked = levelNum <= maxUnlocked;
+                  const prog = levelProgress[levelNum];
+                  const isSelected = levelNum === selectedLevel;
+                  return (
+                    <TouchableOpacity key={levelNum} activeOpacity={unlocked ? 0.7 : 1}
+                      disabled={!unlocked}
+                      onPress={() => {
+                        setSelectedLevel(levelNum);
+                        setLevelCompleted(false);
+                        setGameKey(k => k + 1);
+                        setScreen('game');
+                      }}
+                      style={{
+                        width: 52, height: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: unlocked
+                          ? (isSelected ? '#4A6CF7' : (lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)'))
+                          : (lt ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)'),
+                        borderWidth: 1.5,
+                        borderColor: unlocked
+                          ? (isSelected ? '#4A6CF7' : (lt ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)'))
+                          : (lt ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.07)'),
+                      }}>
+                      {unlocked ? (
+                        <>
+                          <Text style={{ color: isSelected ? '#fff' : textCol, fontSize: 15, fontWeight: '800' }}>{levelNum}</Text>
+                          {prog ? (
+                            <Text style={{ fontSize: 9, marginTop: 1 }}>
+                              {'★'.repeat(prog.stars)}{'☆'.repeat(3 - prog.stars)}
+                            </Text>
+                          ) : null}
+                        </>
+                      ) : (
+                        <Text style={{ fontSize: 16, opacity: 0.35 }}>🔒</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
       </View>
     );
   }
@@ -397,7 +485,11 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
           <Text style={[styles.overScore, { color: textCol }]}>Score: {s.score}</Text>
           <TouchableOpacity style={[styles.startBtn, { backgroundColor: shipT.body, shadowColor: shipT.body, marginTop: 24 }]}
             activeOpacity={0.7} onPress={() => setGameKey(k => k + 1)}>
-            <Text style={styles.startBtnText}>PLAY AGAIN</Text>
+            <Text style={styles.startBtnText}>TRY AGAIN</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.startBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.25)', marginTop: 10 }]}
+            activeOpacity={0.7} onPress={() => setScreen('levels')}>
+            <Text style={[styles.startBtnText, { color: textCol }]}>☰  LEVELS</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.muteBtn, {
             borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
@@ -406,7 +498,6 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
             <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
           </TouchableOpacity>
           <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
-          <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
         </ScrollView>
       </View>
     );
@@ -597,7 +688,7 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
       })}
 
       {/* Pause menu */}
-      {s.paused && (
+      {s.paused && !levelCompleted && (
         <View style={styles.pauseOverlay} onStartShouldSetResponder={() => true}>
           <ScrollView contentContainerStyle={styles.pauseScroll} bounces={false}>
             <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
@@ -610,20 +701,53 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
                 onPress={() => setGameKey(k => k + 1)}>
                 <Text style={styles.menuBtnText}>↻  RESTART</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.menuBtn} activeOpacity={0.7}
+                onPress={() => { g.current.paused = false; setScreen('levels'); }}>
+                <Text style={styles.menuBtnText}>☰  LEVELS</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.muteBtn, {
                 borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
                 backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
               }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
                 <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
               </TouchableOpacity>
+              <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
               <TouchableOpacity style={[styles.menuBtn, styles.menuBtnExit]} activeOpacity={0.7}
                 onPress={() => BackHandler.exitApp()}>
                 <Text style={[styles.menuBtnText, styles.menuBtnExitText]}>✕  EXIT</Text>
               </TouchableOpacity>
-              <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
-              <DifficultyPicker value={difficulty} onChange={setDifficulty} lt={lt} />
             </View>
           </ScrollView>
+        </View>
+      )}
+
+      {/* Level complete overlay */}
+      {levelCompleted && (
+        <View style={styles.pauseOverlay} onStartShouldSetResponder={() => true}>
+          <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
+            <Text style={[styles.pauseTitle, { color: '#FFD866', fontSize: 22 }]}>LEVEL {s.levelNum} COMPLETE!</Text>
+            <Text style={{ fontSize: 28, letterSpacing: 4, marginVertical: 6 }}>
+              {'★'.repeat(levelCompleteStars)}{'☆'.repeat(3 - levelCompleteStars)}
+            </Text>
+            <Text style={{ color: textCol, fontSize: 14, fontWeight: '700', marginBottom: 12 }}>
+              {levelCompleteStars === 3 ? 'Perfect!' : levelCompleteStars === 2 ? 'Great!' : 'Good job!'}
+            </Text>
+            {selectedLevel < LEVELS.length && (
+              <TouchableOpacity style={styles.menuBtn} activeOpacity={0.7}
+                onPress={() => {
+                  const next = selectedLevel + 1;
+                  setSelectedLevel(next);
+                  setLevelCompleted(false);
+                  setGameKey(k => k + 1);
+                }}>
+                <Text style={styles.menuBtnText}>▶  NEXT LEVEL</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[styles.menuBtn, { marginTop: 8, backgroundColor: 'transparent', borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.25)' }]}
+              activeOpacity={0.7} onPress={() => setScreen('levels')}>
+              <Text style={[styles.menuBtnText, { color: textCol }]}>☰  LEVELS</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
