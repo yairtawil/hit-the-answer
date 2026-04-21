@@ -309,13 +309,14 @@ export function createNumbers(answer: number, sw: number, score: number, difficu
   const rocks: FallingNum[] = arr.map((value, i) => {
     const hp = 1 + Math.floor(Math.random() * maxHp);
     // Stagger rocks into 3 depth tiers so horizontally-adjacent rocks never overlap
-    // even at max HP scale (1.5×). Tier spacing (100px) > max rock radius (36px).
+    // even at max HP scale (1.5×). Tier spacing (120px) > max rock size (72px = 1.5×48).
+    // No random jitter — deterministic spacing guarantees min 48px clear gap between tiers.
     const tier = i % 3;
     return {
       id: `n${Date.now()}-${i}`,
       value,
       x: gap * (i + 1) - NUM_SIZE / 2,
-      y: -(NUM_SIZE + 30 + tier * 100 + Math.random() * 60),
+      y: -(NUM_SIZE + 30 + tier * 120),
       correct: value === answer,
       hp,
       maxHp: hp,

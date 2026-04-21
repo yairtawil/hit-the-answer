@@ -744,7 +744,7 @@ function LevelSelectScreen({ levelProgress, onSelect, onBack, onSettings, bgT }:
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
               {levelNums.map(levelNum => {
-                const unlocked = levelNum === 1 || levelProgress[levelNum - 1] != null;
+                const unlocked = tierStarts.includes(levelNum) || levelProgress[levelNum - 1] != null;
                 const prog = levelProgress[levelNum];
                 return (
                   <button

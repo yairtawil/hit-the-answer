@@ -18,7 +18,7 @@ import {
 } from '@hit-the-answer/common';
 
 type LevelProgress = Record<number, { stars: 1 | 2 | 3 }>;
-type Screen = 'title' | 'levels' | 'game';
+type Screen = 'title' | 'levels' | 'game' | 'settings';
 
 const { width: sw, height: sh } = Dimensions.get('window');
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44;
@@ -149,12 +149,57 @@ const tp = StyleSheet.create({
   checkText: { color: '#000', fontSize: 10, fontWeight: '900', lineHeight: 13 },
 });
 
+// ─── Settings Screen ─────────────────────────────────────────────────────────
+
+function SettingsScreen({ bgId, shipId, muted, onBg, onShip, onMute, onBack, lt }: {
+  bgId: string; shipId: string; muted: boolean;
+  onBg: (id: string) => void; onShip: (id: string) => void;
+  onMute: () => void; onBack: () => void;
+  lt: boolean;
+}) {
+  const textCol = lt ? '#1E293B' : '#fff';
+  const subCol = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+  return (
+    <View style={{ position: 'absolute', inset: 0, top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: lt ? 'rgba(255,255,255,0.97)' : 'rgba(5,7,20,0.97)', zIndex: 100 }}>
+      <ScrollView contentContainerStyle={{ alignItems: 'center', paddingTop: HUD_TOP + 16, paddingBottom: 40, paddingHorizontal: 20 }}>
+        <Text style={{ color: lt ? '#B45309' : '#FFD866', fontSize: 13, fontWeight: '800', letterSpacing: 3, marginBottom: 4 }}>HIT THE ANSWER</Text>
+        <Text style={{ color: textCol, fontSize: 28, fontWeight: '900', letterSpacing: 3, marginBottom: 28 }}>SETTINGS</Text>
+
+        <Text style={{ color: subCol, fontSize: 11, fontWeight: '700', letterSpacing: 2, marginBottom: 10 }}>SOUND</Text>
+        <TouchableOpacity onPress={onMute} activeOpacity={0.7} style={{
+          paddingVertical: 12, paddingHorizontal: 32, borderRadius: 12, marginBottom: 24,
+          borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
+          backgroundColor: lt ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)',
+        }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', letterSpacing: 1, color: muted ? subCol : textCol }}>
+            {muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={{ width: '100%', height: 1, backgroundColor: lt ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)', marginBottom: 20 }} />
+
+        <ThemePicker bgId={bgId} shipId={shipId} onBg={onBg} onShip={onShip} lt={lt} />
+
+        <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={{
+          marginTop: 28, paddingVertical: 12, paddingHorizontal: 32, borderRadius: 12,
+          borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
+          backgroundColor: 'transparent',
+        }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', letterSpacing: 2, color: subCol }}>← BACK</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App(): React.JSX.Element {
   const [, rerender] = useState(0);
   const [gameKey, setGameKey] = useState(0);
   const [screen, setScreen] = useState<Screen>('title');
+  const [settingsFrom, setSettingsFrom] = useState<Screen>('title');
   const [selectedLevel, setSelectedLevel] = useState(1);
   const [levelProgress, setLevelProgress] = useState<LevelProgress>({});
   const [levelCompleted, setLevelCompleted] = useState(false);
@@ -264,8 +309,8 @@ export default function App(): React.JSX.Element {
 
   const pan = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !g.current.paused && !g.current.over,
-      onMoveShouldSetPanResponder: () => !g.current.paused && !g.current.over,
+      onStartShouldSetPanResponder: () => !g.current.paused && !g.current.over && !g.current.levelComplete,
+      onMoveShouldSetPanResponder: () => !g.current.paused && !g.current.over && !g.current.levelComplete,
       onPanResponderGrant: () => {
         const s = g.current;
         if (s.over || s.paused) return;
@@ -306,9 +351,6 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
   const qBoxBorder = lt ? 'rgba(180,140,40,0.3)' : 'rgba(255,216,102,0.2)';
   const titleHitCol = lt ? '#B45309' : '#FFD866';
   const taglineCol = lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)';
-  const pauseBtnBg = lt ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
-  const pauseBtnBorder = lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)';
-  const pauseBtnTextCol = lt ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.7)';
 
   const starViews = stars.map((st, i) => {
     const scrollY = screen === 'game' && !s.over ? (st.y + starOffset.current) % sh : st.y;
@@ -358,12 +400,29 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
     </View>
   );
 
+  const openSettings = (from: Screen) => { setSettingsFrom(from); setScreen('settings'); };
+
+  // ─── Settings screen ───
+  if (screen === 'settings') {
+    return (
+      <View style={[styles.root, { backgroundColor: bgT.bg }]}>
+        <StatusBar style="light" />
+        {starViews}
+        <SettingsScreen
+          bgId={bgThemeId} shipId={shipThemeId} muted={muted}
+          onBg={setBgThemeId} onShip={setShipThemeId} onMute={() => setMuted(m => !m)}
+          onBack={() => setScreen(settingsFrom)}
+          lt={lt}
+        />
+      </View>
+    );
+  }
+
   // ─── Title screen ───
   if (screen === 'title') {
     return (
       <View style={[styles.root, { backgroundColor: bgT.bg }]}>
         <StatusBar style="light" />
-        {starViews}
         <View style={styles.titleContainer}>
           {shipView(2.2)}
           <Text style={[styles.titleHit, { color: titleHitCol }]}>HIT THE</Text>
@@ -376,10 +435,16 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
           <TouchableOpacity style={[styles.muteBtn, {
             borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
             backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)',
-          }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
-            <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
+          }]} activeOpacity={0.7} onPress={() => openSettings('title')}>
+            <Text style={[styles.muteBtnText, { color: lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)' }]}>⚙  SETTINGS</Text>
           </TouchableOpacity>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
+          <TouchableOpacity style={[styles.muteBtn, {
+            marginTop: 8,
+            borderColor: 'rgba(255,71,87,0.4)',
+            backgroundColor: 'rgba(255,71,87,0.08)',
+          }]} activeOpacity={0.7} onPress={() => BackHandler.exitApp()}>
+            <Text style={[styles.muteBtnText, { color: '#FF4757' }]}>✕  EXIT</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -387,14 +452,13 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
 
   // ─── Level select screen ───
   if (screen === 'levels') {
-    const highestCleared = Math.max(0, ...Object.keys(levelProgress).map(Number));
-    const maxUnlocked = cheatUnlocked ? LEVELS.length : Math.min(LEVELS.length, highestCleared + 1);
+    const TIER_STARTS = [1, 13, 25, 37, 49];
     function handleCheatTap() {
       cheatTapCount.current += 1;
       if (cheatTapTimer.current) clearTimeout(cheatTapTimer.current);
       if (cheatTapCount.current >= 5) {
         cheatTapCount.current = 0;
-        setCheatUnlocked(true);
+        setCheatUnlocked(v => !v);
       } else {
         cheatTapTimer.current = setTimeout(() => { cheatTapCount.current = 0; }, 1000);
       }
@@ -407,12 +471,18 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
       <View style={[styles.root, { backgroundColor: bgT.bg }]}>
         <StatusBar style="light" />
         {starViews}
-        <View style={{ position: 'absolute', top: HUD_TOP, left: 16, zIndex: 20 }}>
+        <View style={{ position: 'absolute', top: HUD_TOP, left: 16, right: 16, zIndex: 20, flexDirection: 'row', justifyContent: 'space-between' }}>
           <TouchableOpacity onPress={() => setScreen('title')} activeOpacity={0.7}
             style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 10,
               backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
               borderWidth: 1, borderColor: lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)' }}>
             <Text style={{ color: textCol, fontSize: 14, fontWeight: '700' }}>← BACK</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => openSettings('levels')} activeOpacity={0.7}
+            style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 10,
+              backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+              borderWidth: 1, borderColor: lt ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)' }}>
+            <Text style={{ color: textCol, fontSize: 14, fontWeight: '700' }}>⚙ SETTINGS</Text>
           </TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={{ paddingTop: HUD_TOP + 48, paddingBottom: 40, paddingHorizontal: 16 }}>
@@ -429,7 +499,7 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {Array.from({ length: 12 }, (_, i) => {
                   const levelNum = tier * 12 + i + 1;
-                  const unlocked = levelNum <= maxUnlocked;
+                  const unlocked = cheatUnlocked || TIER_STARTS.includes(levelNum) || levelProgress[levelNum - 1] != null;
                   const prog = levelProgress[levelNum];
                   const isSelected = levelNum === selectedLevel;
                   return (
@@ -455,7 +525,7 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
                         <>
                           <Text style={{ color: isSelected ? '#fff' : textCol, fontSize: 15, fontWeight: '800' }}>{levelNum}</Text>
                           {prog ? (
-                            <Text style={{ fontSize: 9, marginTop: 1 }}>
+                            <Text style={{ fontSize: 9, marginTop: 1, color: '#FFD866' }}>
                               {'★'.repeat(prog.stars)}{'☆'.repeat(3 - prog.stars)}
                             </Text>
                           ) : null}
@@ -491,13 +561,6 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
             activeOpacity={0.7} onPress={() => setScreen('levels')}>
             <Text style={[styles.startBtnText, { color: textCol }]}>☰  LEVELS</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.muteBtn, {
-            borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
-            backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)',
-          }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
-            <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
-          </TouchableOpacity>
-          <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
         </ScrollView>
       </View>
     );
@@ -505,16 +568,13 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
 
   // ─── Game screen ───
   return (
-    <View style={[styles.root, { backgroundColor: bgT.bg }]} {...pan.panHandlers}>
+    <View style={[styles.root, { backgroundColor: bgT.bg }]}>
+      <View style={StyleSheet.absoluteFill} {...pan.panHandlers}>
       <StatusBar style="light" />
       {starViews}
 
       <View style={styles.hud}>
         <View style={styles.livesRow}>
-          <TouchableOpacity style={[styles.pauseBtn, { backgroundColor: pauseBtnBg, borderColor: pauseBtnBorder }]} activeOpacity={0.6}
-            onPress={() => { g.current.paused = true; rerender(c => c + 1); }}>
-            <Text style={[styles.pauseBtnText, { color: pauseBtnTextCol }]}>⏸</Text>
-          </TouchableOpacity>
           <Text style={styles.livesText}>
             {'♥'.repeat(s.lives)}{'♡'.repeat(maxDisplay - s.lives)}
           </Text>
@@ -531,6 +591,28 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
           )}
         </View>
       </View>
+
+      {/* Level progress bar */}
+      {(() => {
+        const left = Math.max(0, s.questionsToWin - s.score);
+        const pct = Math.min(1, s.score / s.questionsToWin);
+        const barBg = lt ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)';
+        const leftCol = lt ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.5)';
+        return (
+          <View style={styles.progressRow}>
+            <View style={styles.progressLabels}>
+              <Text style={{ color: '#4ADE80', fontSize: 10, fontWeight: '700' }}>✓ {s.score}</Text>
+              <Text style={{ color: '#FF4757', fontSize: 10, fontWeight: '700' }}>✕ {s.mistakes}</Text>
+              <Text style={{ color: leftCol, fontSize: 10, fontWeight: '700' }}>{left} left</Text>
+            </View>
+            <View style={[styles.progressBarBg, { backgroundColor: barBg }]}>
+              {pct > 0 && (
+                <View style={[styles.progressBarFill, { width: `${pct * 100}%` as any }]} />
+              )}
+            </View>
+          </View>
+        );
+      })()}
 
       {(s.shieldTimer > 0 || s.slowTimer > 0 || s.fastTimer > 0 || s.doubleShotTimer > 0) && (
         <View style={styles.effectsRow}>
@@ -687,9 +769,12 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
         );
       })}
 
-      {/* Pause menu */}
+      <Text style={[styles.hint, { color: hintCol }]}>Drag to move · Tap to shoot</Text>
+      </View>{/* end pan-handler View */}
+
+      {/* Pause menu — outside pan handlers so touches are never eaten */}
       {s.paused && !levelCompleted && (
-        <View style={styles.pauseOverlay} onStartShouldSetResponder={() => true}>
+        <View style={styles.pauseOverlay}>
           <ScrollView contentContainerStyle={styles.pauseScroll} bounces={false}>
             <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
               <Text style={[styles.pauseTitle, { color: textCol }]}>PAUSED</Text>
@@ -705,53 +790,54 @@ const qTextCol = lt ? '#B45309' : '#FFD866';
                 onPress={() => { g.current.paused = false; setScreen('levels'); }}>
                 <Text style={styles.menuBtnText}>☰  LEVELS</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.muteBtn, {
-                borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)',
-                backgroundColor: lt ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
-              }]} activeOpacity={0.7} onPress={() => setMuted(m => !m)}>
-                <Text style={[styles.muteBtnText, { color: muted ? (lt ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)') : (lt ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.7)') }]}>{muted ? '🔇  SOUND OFF' : '🔊  SOUND ON'}</Text>
+              <TouchableOpacity style={[styles.menuBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.25)' }]} activeOpacity={0.7}
+                onPress={() => openSettings('game')}>
+                <Text style={[styles.menuBtnText, { color: textCol }]}>⚙  SETTINGS</Text>
               </TouchableOpacity>
-              <ThemePicker bgId={bgThemeId} shipId={shipThemeId} onBg={setBgThemeId} onShip={setShipThemeId} lt={lt} />
-              <TouchableOpacity style={[styles.menuBtn, styles.menuBtnExit]} activeOpacity={0.7}
-                onPress={() => BackHandler.exitApp()}>
-                <Text style={[styles.menuBtnText, styles.menuBtnExitText]}>✕  EXIT</Text>
+              <TouchableOpacity style={[styles.menuBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#FF4757' }]} activeOpacity={0.7}
+                onPress={() => { g.current.paused = false; setScreen('title'); }}>
+                <Text style={[styles.menuBtnText, { color: '#FF4757' }]}>✕  EXIT</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </View>
       )}
 
-      {/* Level complete overlay */}
+      {/* Level complete — outside pan handlers so touches are never eaten */}
       {levelCompleted && (
-        <View style={styles.pauseOverlay} onStartShouldSetResponder={() => true}>
-          <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
-            <Text style={[styles.pauseTitle, { color: '#FFD866', fontSize: 22 }]}>LEVEL {s.levelNum} COMPLETE!</Text>
-            <Text style={{ fontSize: 28, letterSpacing: 4, marginVertical: 6 }}>
-              {'★'.repeat(levelCompleteStars)}{'☆'.repeat(3 - levelCompleteStars)}
-            </Text>
-            <Text style={{ color: textCol, fontSize: 14, fontWeight: '700', marginBottom: 12 }}>
-              {levelCompleteStars === 3 ? 'Perfect!' : levelCompleteStars === 2 ? 'Great!' : 'Good job!'}
-            </Text>
-            {selectedLevel < LEVELS.length && (
-              <TouchableOpacity style={styles.menuBtn} activeOpacity={0.7}
-                onPress={() => {
-                  const next = selectedLevel + 1;
-                  setSelectedLevel(next);
-                  setLevelCompleted(false);
-                  setGameKey(k => k + 1);
-                }}>
-                <Text style={styles.menuBtnText}>▶  NEXT LEVEL</Text>
+        <View style={styles.pauseOverlay}>
+          <ScrollView contentContainerStyle={styles.pauseScroll} bounces={false}>
+            <View style={[styles.pauseMenu, lt && { backgroundColor: '#F1F5F9', borderColor: 'rgba(0,0,0,0.1)' }]}>
+              <Text style={[styles.pauseTitle, { color: '#FFD866', fontSize: 22 }]}>LEVEL {s.levelNum} COMPLETE!</Text>
+              <Text style={{ fontSize: 28, letterSpacing: 4, marginVertical: 6, color: '#FFD866' }}>
+                {'★'.repeat(levelCompleteStars)}{'☆'.repeat(3 - levelCompleteStars)}
+              </Text>
+              <Text style={{ color: textCol, fontSize: 14, fontWeight: '700', marginBottom: 12 }}>
+                {levelCompleteStars === 3 ? 'Perfect!' : levelCompleteStars === 2 ? 'Great!' : 'Good job!'}
+              </Text>
+              {selectedLevel < LEVELS.length && (
+                <TouchableOpacity style={styles.menuBtn} activeOpacity={0.7}
+                  onPress={() => {
+                    const next = selectedLevel + 1;
+                    setSelectedLevel(next);
+                    setLevelCompleted(false);
+                    setGameKey(k => k + 1);
+                  }}>
+                  <Text style={styles.menuBtnText}>▶  NEXT LEVEL</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[styles.menuBtn, { marginTop: 8, backgroundColor: 'transparent', borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.25)' }]}
+                activeOpacity={0.7} onPress={() => setScreen('levels')}>
+                <Text style={[styles.menuBtnText, { color: textCol }]}>☰  LEVELS</Text>
               </TouchableOpacity>
-            )}
-            <TouchableOpacity style={[styles.menuBtn, { marginTop: 8, backgroundColor: 'transparent', borderWidth: 1.5, borderColor: lt ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.25)' }]}
-              activeOpacity={0.7} onPress={() => setScreen('levels')}>
-              <Text style={[styles.menuBtnText, { color: textCol }]}>☰  LEVELS</Text>
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity style={[styles.menuBtn, { marginTop: 4, backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#FF4757' }]}
+                activeOpacity={0.7} onPress={() => { setLevelCompleted(false); setScreen('title'); }}>
+                <Text style={[styles.menuBtnText, { color: '#FF4757' }]}>✕  EXIT</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       )}
-
-      <Text style={[styles.hint, { color: hintCol }]}>Drag to move · Tap to shoot</Text>
     </View>
   );
 }
@@ -820,8 +906,6 @@ const styles = StyleSheet.create({
   menuBtnSound: { borderWidth: 1.5 },
   muteBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 12, borderWidth: 1.5 },
   muteBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 1 },
-  menuBtnExit: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.4)', marginTop: 4 },
-  menuBtnExitText: { color: '#FF4757' },
   titleContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   titleHit: { fontSize: 44, fontWeight: '900', color: '#FFD866', letterSpacing: 4 },
   titleAnswer: { fontSize: 50, fontWeight: '900', letterSpacing: 6, marginTop: -4 },
@@ -834,4 +918,8 @@ const styles = StyleSheet.create({
   playBtn: { marginTop: 40, paddingVertical: 16, paddingHorizontal: 40, backgroundColor: '#4A6CF7', borderRadius: 14 },
   playBtnText: { color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: 2 },
   hint: { position: 'absolute', bottom: 30, alignSelf: 'center', color: 'rgba(255,255,255,0.2)', fontSize: 13 },
+  progressRow: { position: 'absolute', top: HUD_TOP + 44, left: 16, right: 16, zIndex: 10 },
+  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
+  progressBarBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  progressBarFill: { height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },
 });
