@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, Dimensions, PanResponder, TouchableOpacity, BackHandler, ScrollView,
-  Platform, StatusBar as RNStatusBar,
+  Platform, StatusBar as RNStatusBar, I18nManager,
   type GestureResponderEvent, type PanResponderGestureState,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +19,8 @@ import {
 
 type LevelProgress = Record<number, { stars: 1 | 2 | 3 }>;
 type Screen = 'title' | 'levels' | 'game' | 'settings';
+
+I18nManager.allowRTL(false);
 
 const { width: sw, height: sh } = Dimensions.get('window');
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44;
