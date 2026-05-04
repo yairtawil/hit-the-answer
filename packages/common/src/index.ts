@@ -392,6 +392,11 @@ export function spawnBullets(s: GameState, shipX: number, sh: number): void {
   const bw = power ? POWER_BULLET_W : BULLET_W;
   const bx = shipX + SHIP_W / 2 - bw / 2;
   const by = shipY(sh) - BULLET_H;
+  const wouldOverlap = s.bullets.some(b => {
+    const ebw = b.power ? POWER_BULLET_W : BULLET_W;
+    return overlaps(bx, by, bw, BULLET_H, b.x, b.y, ebw, BULLET_H);
+  });
+  if (wouldOverlap) return;
   s.bullets.push({ id: `b${Date.now()}-${Math.random()}`, x: bx, y: by, power });
 }
 
