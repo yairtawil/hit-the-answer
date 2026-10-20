@@ -2,7 +2,6 @@
   "name": "hit-the-answer",
   "private": true,
   "version": "1.0.0",
-  "main": "packages/mobile/index.ts",
   "workspaces": [
     "packages/common",
     "packages/mobile",
@@ -12,6 +11,7 @@
     "mobile": "npm run start -w packages/mobile",
     "web": "npm run dev -w packages/web",
     "web:build": "npm run build -w packages/web",
-    "build:android": "npm run build:android -w packages/mobile"
+    "build:android": "npm run build:android -w packages/mobile",
+    "build:android:prod": "npm run build:android:prod -w packages/mobile"
   }
 }

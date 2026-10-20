@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.yairtawil.hittheanswer",
-      "versionCode": 1,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#06080F",
         "foregroundImage": "./assets/android-icon-foreground.png",

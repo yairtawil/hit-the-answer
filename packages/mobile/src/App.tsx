@@ -71,7 +71,9 @@ const SOUND_B64: Record<string, string> = {
 const _sounds: Partial<Record<string, Audio.Sound>> = {};
 
 async function initSounds() {
-  await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+  try {
+    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+  } catch (_) { /* ignore */ }
   for (const [key, b64] of Object.entries(SOUND_B64)) {
     try {
       // Android/iOS don't support data: URIs — write to a real cache file first
@@ -233,14 +235,16 @@ export default function App(): React.JSX.Element {
   // Load settings and init sounds on mount
   useEffect(() => {
     (async () => {
-      const bg = await AsyncStorage.getItem('hta_bg');
-      const ship = await AsyncStorage.getItem('hta_ship');
-      const m = await AsyncStorage.getItem('hta_muted');
-      const lvls = await AsyncStorage.getItem('hta_levels');
-      if (bg) setBgThemeId(bg);
-      if (ship) setShipThemeId(ship);
-      if (m) setMuted(m === '1');
-      if (lvls) { try { const p = JSON.parse(lvls); setLevelProgress(p); levelProgressRef.current = p; } catch {} }
+      try {
+        const bg = await AsyncStorage.getItem('hta_bg');
+        const ship = await AsyncStorage.getItem('hta_ship');
+        const m = await AsyncStorage.getItem('hta_muted');
+        const lvls = await AsyncStorage.getItem('hta_levels');
+        if (bg) setBgThemeId(bg);
+        if (ship) setShipThemeId(ship);
+        if (m) setMuted(m === '1');
+        if (lvls) { try { const p = JSON.parse(lvls); setLevelProgress(p); levelProgressRef.current = p; } catch {} }
+      } catch (_) { /* storage unavailable — keep defaults */ }
       setSettingsLoaded(true);
     })();
     initSounds();

@@ -15,7 +15,13 @@ npx expo start --android
 
 # From packages/web:
 npm run build      # Type-check + production build
+
+# EAS builds (from repo root; these run inside packages/mobile):
+npm run build:android        # preview APK
+npm run build:android:prod   # production AAB for Google Play
 ```
+
+EAS builds must run from `packages/mobile` — the only Expo project (`app.json`/`eas.json` live there). Running `eas build` from the repo root autolinks no native modules (the root `package.json` has no dependencies), producing a build that crashes on launch.
 
 ## Architecture
 
